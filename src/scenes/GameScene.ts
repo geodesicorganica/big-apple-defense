@@ -1,17 +1,19 @@
 import Phaser from 'phaser';
 import { PathSystem, Waypoint } from '../systems/PathSystem';
 import { Enemy, GRUNT_CONFIG } from '../entities/Enemy';
+import { Tower, PLACEHOLDER_TOWER_CONFIG } from '../entities/Tower';
+import { Projectile } from '../entities/Projectile';
 
 /**
  * GameScene — main gameplay.
  *
- * M2 (this commit): renders the grid + path, spawns a continuous stream of grunts
- * walking along the path. No towers yet, no waves, no economy.
- * Goal of this commit: prove the grid + path + enemy traversal pipeline works.
+ * M2/C2 (this commit): tower placement + projectiles + enemy kills.
+ *  - Click any sidewalk tile to place a placeholder tower (free in C2; gold in C3)
+ *  - Towers find nearest enemy in range and fire projectiles
+ *  - Enemies take damage, die when HP hits 0
+ *  - Hover indicator shows placeable (green) vs blocked (red) tiles
  *
- * Coming next:
- *  - C2: tower placement, projectiles, enemy kills
- *  - C3: wave manager, economy, HUD, win/lose
+ * Coming next: C3 = wave manager, economy, HUD, win/lose, retry.
  */
 export class GameScene extends Phaser.Scene {
   static readonly TILE_SIZE = 80;
@@ -20,8 +22,16 @@ export class GameScene extends Phaser.Scene {
 
   private path!: PathSystem;
   private enemies: Enemy[] = [];
+  private towers: Tower[] = [];
+  private projectiles: Projectile[] = [];
+  private occupiedTiles = new Set<string>();
+
   private spawnTimer = 0;
   private readonly SPAWN_INTERVAL_MS = 1200;
+
+  private hoverGraphics!: Phaser.GameObjects.Graphics;
+  private hoverTile: { col: number; row: number } | null = null;
+  private towerCountText!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -30,21 +40,32 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.path = new PathSystem(this.buildPathWaypoints());
     this.enemies = [];
+    this.towers = [];
+    this.projectiles = [];
+    this.occupiedTiles = new Set();
     this.spawnTimer = 0;
+    this.hoverTile = null;
 
     this.drawBackground();
     this.drawGrid();
     this.drawPath();
     this.drawHUDPlaceholder();
 
-    // Reset on scene restart
+    this.hoverGraphics = this.add.graphics();
+    this.wireInput();
+
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.enemies.forEach((e) => e.destroy());
+      this.towers.forEach((t) => t.destroy());
+      this.projectiles.forEach((p) => p.destroy());
       this.enemies = [];
+      this.towers = [];
+      this.projectiles = [];
+      this.occupiedTiles.clear();
     });
   }
 
-  override update(_time: number, delta: number): void {
+  override update(time: number, delta: number): void {
     this.spawnTimer += delta;
     if (this.spawnTimer >= this.SPAWN_INTERVAL_MS) {
       this.spawnTimer = 0;
@@ -52,11 +73,22 @@ export class GameScene extends Phaser.Scene {
     }
 
     const deltaSeconds = delta / 1000;
+
     for (const enemy of this.enemies) {
       enemy.update(deltaSeconds);
     }
 
-    // Cull enemies that leaked or died
+    for (const tower of this.towers) {
+      const projectile = tower.update(time, this.enemies);
+      if (projectile) {
+        this.projectiles.push(projectile);
+      }
+    }
+
+    for (const projectile of this.projectiles) {
+      projectile.update(deltaSeconds);
+    }
+
     this.enemies = this.enemies.filter((e) => {
       if (e.reachedEnd || e.dead) {
         e.destroy();
@@ -64,15 +96,17 @@ export class GameScene extends Phaser.Scene {
       }
       return true;
     });
+    this.projectiles = this.projectiles.filter((p) => {
+      if (p.dead) {
+        p.destroy();
+        return false;
+      }
+      return true;
+    });
+
+    this.updateTowerCountText();
   }
 
-  /**
-   * Times Square placeholder path — enters bottom-right, S-curves through the
-   * center, exits top-left. Off-screen entry/exit so spawns and leaks aren't
-   * visually abrupt.
-   *
-   * Tile coordinates → pixel center: (col * TILE_SIZE + TILE_SIZE/2, row * TILE_SIZE + TILE_SIZE/2)
-   */
   private buildPathWaypoints(): Waypoint[] {
     const T = GameScene.TILE_SIZE;
     const half = T / 2;
@@ -81,13 +115,13 @@ export class GameScene extends Phaser.Scene {
       y: row * T + half,
     });
     return [
-      { x: GameScene.GRID_COLS * T + T, y: 7 * T + half }, // off-screen right
+      { x: GameScene.GRID_COLS * T + T, y: 7 * T + half },
       tile(13, 7),
       tile(3, 7),
       tile(3, 4),
       tile(12, 4),
       tile(12, 1),
-      { x: -T, y: 1 * T + half }, // off-screen left
+      { x: -T, y: 1 * T + half },
     ];
   }
 
@@ -96,7 +130,62 @@ export class GameScene extends Phaser.Scene {
     this.enemies.push(enemy);
   }
 
-  /** Twilight NYC gradient — slightly lighter than the title splash for play visibility. */
+  private wireInput(): void {
+    this.input.on(Phaser.Input.Events.POINTER_MOVE, (pointer: Phaser.Input.Pointer) => {
+      const tile = this.pointerToTile(pointer);
+      this.hoverTile = tile;
+      this.redrawHover();
+    });
+
+    this.input.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
+      const tile = this.pointerToTile(pointer);
+      if (!tile) return;
+      this.tryPlaceTower(tile.col, tile.row);
+    });
+  }
+
+  private pointerToTile(pointer: Phaser.Input.Pointer): { col: number; row: number } | null {
+    const T = GameScene.TILE_SIZE;
+    const col = Math.floor(pointer.worldX / T);
+    const row = Math.floor(pointer.worldY / T);
+    if (col < 0 || col >= GameScene.GRID_COLS) return null;
+    if (row < 0 || row >= GameScene.GRID_ROWS) return null;
+    return { col, row };
+  }
+
+  private isPlaceable(col: number, row: number): boolean {
+    if (this.path.isOnPath(col, row, GameScene.TILE_SIZE)) return false;
+    if (this.occupiedTiles.has(this.tileKey(col, row))) return false;
+    return true;
+  }
+
+  private tryPlaceTower(col: number, row: number): void {
+    if (!this.isPlaceable(col, row)) return;
+    const T = GameScene.TILE_SIZE;
+    const x = col * T + T / 2;
+    const y = row * T + T / 2;
+    const tower = new Tower(this, col, row, x, y, PLACEHOLDER_TOWER_CONFIG);
+    this.towers.push(tower);
+    this.occupiedTiles.add(this.tileKey(col, row));
+  }
+
+  private tileKey(col: number, row: number): string {
+    return `${col},${row}`;
+  }
+
+  private redrawHover(): void {
+    this.hoverGraphics.clear();
+    if (!this.hoverTile) return;
+    const T = GameScene.TILE_SIZE;
+    const { col, row } = this.hoverTile;
+    const placeable = this.isPlaceable(col, row);
+    const color = placeable ? 0x66ff66 : 0xff3344;
+    this.hoverGraphics.lineStyle(3, color, 0.85);
+    this.hoverGraphics.strokeRect(col * T + 2, row * T + 2, T - 4, T - 4);
+    this.hoverGraphics.fillStyle(color, 0.12);
+    this.hoverGraphics.fillRect(col * T + 2, row * T + 2, T - 4, T - 4);
+  }
+
   private drawBackground(): void {
     const g = this.add.graphics();
     const { width, height } = this.scale;
@@ -110,12 +199,10 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Subtle grid + sidewalk highlight on placeable tiles. */
   private drawGrid(): void {
     const g = this.add.graphics();
     const T = GameScene.TILE_SIZE;
 
-    // Sidewalk fill on placeable tiles
     for (let c = 0; c < GameScene.GRID_COLS; c++) {
       for (let r = 0; r < GameScene.GRID_ROWS; r++) {
         if (!this.path.isOnPath(c, r, T)) {
@@ -125,7 +212,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Grid lines
     g.lineStyle(1, 0x2a2a3a, 0.35);
     for (let c = 0; c <= GameScene.GRID_COLS; c++) {
       g.lineBetween(c * T, 0, c * T, GameScene.GRID_ROWS * T);
@@ -135,39 +221,29 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Path rendered as a thick dark road with a yellow center line. */
   private drawPath(): void {
     const T = GameScene.TILE_SIZE;
     const pts = this.path.waypoints;
 
-    // Road body
     const road = this.add.graphics();
     road.lineStyle(T * 0.85, 0x261506, 1);
     road.beginPath();
     road.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) {
-      road.lineTo(pts[i].x, pts[i].y);
-    }
+    for (let i = 1; i < pts.length; i++) road.lineTo(pts[i].x, pts[i].y);
     road.strokePath();
 
-    // Asphalt highlight (inner stroke for depth)
     const highlight = this.add.graphics();
     highlight.lineStyle(T * 0.7, 0x352010, 1);
     highlight.beginPath();
     highlight.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) {
-      highlight.lineTo(pts[i].x, pts[i].y);
-    }
+    for (let i = 1; i < pts.length; i++) highlight.lineTo(pts[i].x, pts[i].y);
     highlight.strokePath();
 
-    // Yellow dashed center line
     const center = this.add.graphics();
     center.lineStyle(3, 0xfff200, 0.85);
     center.beginPath();
     center.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) {
-      center.lineTo(pts[i].x, pts[i].y);
-    }
+    for (let i = 1; i < pts.length; i++) center.lineTo(pts[i].x, pts[i].y);
     center.strokePath();
   }
 
@@ -179,12 +255,33 @@ export class GameScene extends Phaser.Scene {
       stroke: '#c1272d',
       strokeThickness: 2,
     });
+
+    this.add.text(20, 38, 'Click any sidewalk tile to place a tower', {
+      fontFamily: 'system-ui, sans-serif',
+      fontSize: '13px',
+      color: '#bbbbbb',
+      fontStyle: 'italic',
+    });
+
+    this.towerCountText = this.add.text(this.scale.width - 20, 38, 'Towers: 0', {
+      fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+      fontSize: '13px',
+      color: '#ffffff',
+    });
+    this.towerCountText.setOrigin(1, 0);
+
     this.add
-      .text(this.scale.width - 20, 12, 'v0.2.0 — M2 / C1', {
+      .text(this.scale.width - 20, 12, 'v0.2.1 — M2 / C2', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',
       })
       .setOrigin(1, 0);
+  }
+
+  private updateTowerCountText(): void {
+    if (this.towerCountText) {
+      this.towerCountText.setText(`Towers: ${this.towers.length}`);
+    }
   }
 }

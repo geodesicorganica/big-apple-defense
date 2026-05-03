@@ -1,6 +1,6 @@
 {
   "name": "big-apple-defense",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
   "description": "NYC tower defense vs aliens. Pick a clan, defend the city.",

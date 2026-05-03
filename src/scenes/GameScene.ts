@@ -26,10 +26,10 @@ export class GameScene extends Phaser.Scene {
   static readonly GRID_COLS = 16;
   static readonly GRID_ROWS = 9;
 
-  // v0.2.3 difficulty pass: starting gold halved (rounded), lives 5 → 3.
-  // Player can buy exactly 2 towers turn 1 (150 / 75 = 2) and every leak hurts.
-  static readonly STARTING_GOLD = 150;
-  static readonly STARTING_LIVES = 3;
+  // Balance history: 200g/5L (too easy) → 150g/3L (too hard) → 175g/4L (midpoint).
+  // 175g buys 2 towers (150g) with 25g spare for a 3rd-tower buy after first kills.
+  static readonly STARTING_GOLD = 175;
+  static readonly STARTING_LIVES = 4;
 
   private path!: PathSystem;
   private economy!: Economy;
@@ -43,6 +43,7 @@ export class GameScene extends Phaser.Scene {
   private gameOver = false;
   private towersPlaced = 0;
 
+  // HUD
   private hudGold!: Phaser.GameObjects.Text;
   private hudLives!: Phaser.GameObjects.Text;
   private hudWave!: Phaser.GameObjects.Text;
@@ -288,7 +289,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.add
-      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.3 — M2 / C4 (balance)', {
+      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.4 — M2 / C5 (retune)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',

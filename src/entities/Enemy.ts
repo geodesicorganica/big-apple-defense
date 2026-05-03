@@ -87,24 +87,26 @@ export class Enemy {
 }
 
 /**
- * v0.2.3 difficulty pass: grunts and heavies both got tougher, faster, and
- * cheaper to incentivize tighter resource decisions.
+ * Balance history:
+ *   v0.2.2: grunt 60HP/70spd/10g, heavy 220HP/50spd/30g — too easy
+ *   v0.2.3: grunt 75HP/80spd/7g,  heavy 320HP/60spd/20g — too hard
+ *   v0.2.4: midpoint between the two extremes
  */
 
 /** Standard grunt — basic enemy, alien green. */
 export const GRUNT_CONFIG: EnemyConfig = {
-  hp: 75,
-  speed: 80,
+  hp: 68,
+  speed: 75,
   radius: 14,
   color: 0x7cf28a,
-  goldReward: 7,
+  goldReward: 8,
 };
 
 /** Heavy — tanky alien, acid purple. Introduced wave 3. */
 export const HEAVY_CONFIG: EnemyConfig = {
-  hp: 320,
-  speed: 60,
+  hp: 270,
+  speed: 55,
   radius: 22,
   color: 0x8a2be2,
-  goldReward: 20,
+  goldReward: 25,
 };

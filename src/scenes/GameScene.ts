@@ -291,7 +291,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.add
-      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.5 — M2 / C6 (gold + range)', {
+      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.6 — M2 / C7 (gold bump)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',

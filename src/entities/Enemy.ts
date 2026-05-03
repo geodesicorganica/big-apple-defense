@@ -91,8 +91,9 @@ export class Enemy {
  *   v0.2.2: grunt 60HP/70spd/10g, heavy 220HP/50spd/30g — too easy
  *   v0.2.3: grunt 75HP/80spd/7g,  heavy 320HP/60spd/20g — too hard
  *   v0.2.4: midpoint between the two — close, but too much gold late
- *   v0.2.5: HP/speed unchanged, kill rewards cut (8→5 grunt, 25→18 heavy)
- *           to drain the late-game gold surplus
+ *   v0.2.5: kill rewards cut (8→5 grunt, 25→18 heavy) — too tight, no
+ *           tower-buy after W1
+ *   v0.2.6: grunt 5→6 (small ongoing bump); heavy unchanged
  */
 
 /** Standard grunt — basic enemy, alien green. */
@@ -101,7 +102,7 @@ export const GRUNT_CONFIG: EnemyConfig = {
   speed: 75,
   radius: 14,
   color: 0x7cf28a,
-  goldReward: 5,
+  goldReward: 6,
 };
 
 /** Heavy — tanky alien, acid purple. Introduced wave 3. */

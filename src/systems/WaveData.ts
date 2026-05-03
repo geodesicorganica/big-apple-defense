@@ -56,6 +56,8 @@ export const WAVE_DEFINITIONS: ReadonlyArray<ReadonlyArray<WaveStep>> = [
  *   v0.2.2: 50 / 70 / 100 — too easy
  *   v0.2.3: 30 / 40 / 60  — too hard
  *   v0.2.4: 40 / 55 / 80  — gold pooled
- *   v0.2.5: 25 / 35 / 55  — pulled below v0.2.3 to drain the late-game pool
+ *   v0.2.5: 25 / 35 / 55  — too tight; couldn't afford a tower after W1
+ *   v0.2.6: 50 / 35 / 55  — W1 bonus doubled so post-W1 gold = ~104g
+ *           (1 tower buyable immediately during W2 prep); W2/W3 unchanged
  */
-export const WAVE_REWARDS: ReadonlyArray<number> = [25, 35, 55];
+export const WAVE_REWARDS: ReadonlyArray<number> = [50, 35, 55];

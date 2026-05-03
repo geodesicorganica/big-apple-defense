@@ -1,9 +1,12 @@
 import Phaser from 'phaser';
 
 /**
- * M1 Foundation: "Coming Soon" splash screen.
- * Renders an NYC dusk skyline with the game title and a teaser of the 7 clans.
- * This scene exists primarily to prove the Phaser + TS + Vite + Vercel pipeline works end-to-end.
+ * Title screen. Originally the M1 "Coming Soon" splash; from M2 onward it acts
+ * as a click-to-play gate. Renders an NYC dusk skyline with the game title and
+ * a teaser of the 7 clans.
+ *
+ * (File still named ComingSoonScene for now — will rename to TitleScene in a
+ * later cleanup pass once M2 is fully shipped.)
  */
 export class ComingSoonScene extends Phaser.Scene {
   constructor() {
@@ -20,9 +23,9 @@ export class ComingSoonScene extends Phaser.Scene {
     this.drawSubtitleAndStatus(width, height);
     this.drawClanTease(width, height);
     this.drawVersionTag(width, height);
+    this.wireClickToPlay(width, height);
   }
 
-  /** NYC dusk gradient background — deep navy at top fading to warm orange at horizon. */
   private drawDuskSky(width: number, height: number): void {
     const graphics = this.add.graphics();
     for (let y = 0; y < height; y++) {
@@ -112,16 +115,18 @@ export class ComingSoonScene extends Phaser.Scene {
       }
     );
     subtitle.setOrigin(0.5);
-    const comingSoon = this.add.text(width / 2, height / 2 + 50, 'COMING SOON', {
+
+    const playPrompt = this.add.text(width / 2, height / 2 + 60, 'CLICK ANYWHERE TO PLAY', {
       fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
-      fontSize: '40px',
+      fontSize: '36px',
       fontStyle: 'bold',
       color: '#ffffff',
     });
-    comingSoon.setOrigin(0.5);
+    playPrompt.setOrigin(0.5);
+
     this.tweens.add({
-      targets: comingSoon,
-      alpha: { from: 1, to: 0.25 },
+      targets: playPrompt,
+      alpha: { from: 1, to: 0.4 },
       duration: 900,
       yoyo: true,
       repeat: -1,
@@ -141,11 +146,25 @@ export class ComingSoonScene extends Phaser.Scene {
       .setOrigin(0.5);
   }
 
-  private drawVersionTag(width: number, height: number): void {
-    this.add.text(20, height - 24, 'v0.1.0 — M1: Foundation', {
+  private drawVersionTag(_width: number, height: number): void {
+    this.add.text(20, height - 24, 'v0.2.0 — M2: Core Loop', {
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: '12px',
       color: '#888888',
+    });
+  }
+
+  /** Click anywhere to start GameScene. */
+  private wireClickToPlay(width: number, height: number): void {
+    const zone = this.add
+      .zone(0, 0, width, height)
+      .setOrigin(0)
+      .setInteractive({ useHandCursor: true });
+    zone.once('pointerdown', () => {
+      this.cameras.main.fadeOut(300, 0, 0, 0);
+      this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+        this.scene.start('GameScene');
+      });
     });
   }
 }

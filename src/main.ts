@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { ComingSoonScene } from './scenes/ComingSoonScene';
+import { GameScene } from './scenes/GameScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -11,7 +12,7 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [ComingSoonScene],
+  scene: [ComingSoonScene, GameScene],
   banner: false,
 };
 

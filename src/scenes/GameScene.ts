@@ -1,37 +1,49 @@
 import Phaser from 'phaser';
 import { PathSystem, Waypoint } from '../systems/PathSystem';
-import { Enemy, GRUNT_CONFIG } from '../entities/Enemy';
+import { Enemy, GRUNT_CONFIG, HEAVY_CONFIG, EnemyConfig } from '../entities/Enemy';
 import { Tower, PLACEHOLDER_TOWER_CONFIG } from '../entities/Tower';
 import { Projectile } from '../entities/Projectile';
+import { Economy } from '../systems/Economy';
+import { WaveManager } from '../systems/WaveManager';
+import { WAVE_DEFINITIONS, WAVE_REWARDS, EnemyType } from '../systems/WaveData';
+import type { GameOverData } from './GameOverScene';
 
 /**
- * GameScene — main gameplay.
+ * GameScene — full M2 core loop.
  *
- * M2/C2 (this commit): tower placement + projectiles + enemy kills.
- *  - Click any sidewalk tile to place a placeholder tower (free in C2; gold in C3)
- *  - Towers find nearest enemy in range and fire projectiles
- *  - Enemies take damage, die when HP hits 0
- *  - Hover indicator shows placeable (green) vs blocked (red) tiles
- *
- * Coming next: C3 = wave manager, economy, HUD, win/lose, retry.
+ *  - 16x9 grid (80px tiles) with hardcoded Times Square S-curve path
+ *  - 3 waves driven by WaveManager (3-sec prep, spawn schedule, mop-up gate)
+ *  - Tower placement: click sidewalk, pay gold, tower fires at nearest enemy
+ *  - Projectiles deal damage; kills earn gold; leaks cost lives
+ *  - Win = all 3 waves cleared with lives > 0
+ *  - Lose = lives reach 0 → GameOverScene with stats + retry
  */
 export class GameScene extends Phaser.Scene {
   static readonly TILE_SIZE = 80;
   static readonly GRID_COLS = 16;
   static readonly GRID_ROWS = 9;
 
+  static readonly STARTING_GOLD = 200;
+  static readonly STARTING_LIVES = 5;
+
   private path!: PathSystem;
+  private economy!: Economy;
+  private waveManager!: WaveManager;
+
   private enemies: Enemy[] = [];
   private towers: Tower[] = [];
   private projectiles: Projectile[] = [];
   private occupiedTiles = new Set<string>();
 
-  private spawnTimer = 0;
-  private readonly SPAWN_INTERVAL_MS = 1200;
+  private gameOver = false;
+  private towersPlaced = 0;
 
+  private hudGold!: Phaser.GameObjects.Text;
+  private hudLives!: Phaser.GameObjects.Text;
+  private hudWave!: Phaser.GameObjects.Text;
+  private hudHint!: Phaser.GameObjects.Text;
   private hoverGraphics!: Phaser.GameObjects.Graphics;
   private hoverTile: { col: number; row: number } | null = null;
-  private towerCountText!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -39,20 +51,25 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.path = new PathSystem(this.buildPathWaypoints());
+    this.economy = new Economy(GameScene.STARTING_GOLD, GameScene.STARTING_LIVES);
+    this.waveManager = new WaveManager(this, WAVE_DEFINITIONS);
     this.enemies = [];
     this.towers = [];
     this.projectiles = [];
     this.occupiedTiles = new Set();
-    this.spawnTimer = 0;
+    this.gameOver = false;
+    this.towersPlaced = 0;
     this.hoverTile = null;
 
     this.drawBackground();
     this.drawGrid();
     this.drawPath();
-    this.drawHUDPlaceholder();
+    this.drawHUD();
 
     this.hoverGraphics = this.add.graphics();
     this.wireInput();
+
+    this.cameras.main.fadeIn(250, 0, 0, 0);
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.enemies.forEach((e) => e.destroy());
@@ -66,36 +83,70 @@ export class GameScene extends Phaser.Scene {
   }
 
   override update(time: number, delta: number): void {
-    this.spawnTimer += delta;
-    if (this.spawnTimer >= this.SPAWN_INTERVAL_MS) {
-      this.spawnTimer = 0;
-      this.spawnGrunt();
+    if (this.gameOver) return;
+
+    const enemiesOnField = this.enemies.length;
+    const step = this.waveManager.update(time, enemiesOnField);
+    if (step) {
+      this.spawnEnemy(step.enemyType);
+    }
+
+    if (this.waveManager.isAwaitingAdvance() && !this.waveManager.isAllDone()) {
+      const waveIdx = this.waveManager.getCurrentWaveNumber() - 1;
+      const reward = WAVE_REWARDS[waveIdx] ?? 50;
+      this.economy.earn(reward);
+      this.flashFloatingText(
+        `Wave ${this.waveManager.getCurrentWaveNumber()} clear! +${reward}g`,
+        this.scale.width / 2,
+        110,
+        '#fff200'
+      );
+      this.waveManager.advance();
+    }
+
+    if (
+      this.waveManager.isAllDone() &&
+      this.enemies.length === 0 &&
+      !this.gameOver
+    ) {
+      this.endGame(true);
+      return;
     }
 
     const deltaSeconds = delta / 1000;
-
-    for (const enemy of this.enemies) {
-      enemy.update(deltaSeconds);
-    }
+    for (const enemy of this.enemies) enemy.update(deltaSeconds);
 
     for (const tower of this.towers) {
       const projectile = tower.update(time, this.enemies);
-      if (projectile) {
-        this.projectiles.push(projectile);
-      }
+      if (projectile) this.projectiles.push(projectile);
     }
 
-    for (const projectile of this.projectiles) {
-      projectile.update(deltaSeconds);
-    }
+    for (const projectile of this.projectiles) projectile.update(deltaSeconds);
 
-    this.enemies = this.enemies.filter((e) => {
-      if (e.reachedEnd || e.dead) {
-        e.destroy();
-        return false;
+    const stillAlive: Enemy[] = [];
+    for (const enemy of this.enemies) {
+      if (enemy.dead) {
+        this.economy.earn(enemy.config.goldReward);
+        this.economy.recordKill();
+        enemy.destroy();
+      } else if (enemy.reachedEnd) {
+        const ranOut = this.economy.loseLife();
+        enemy.destroy();
+        if (ranOut) {
+          this.endGame(false);
+          this.enemies = [];
+          this.projectiles = this.projectiles.filter((p) => {
+            p.destroy();
+            return false;
+          });
+          return;
+        }
+      } else {
+        stillAlive.push(enemy);
       }
-      return true;
-    });
+    }
+    this.enemies = stillAlive;
+
     this.projectiles = this.projectiles.filter((p) => {
       if (p.dead) {
         p.destroy();
@@ -104,7 +155,7 @@ export class GameScene extends Phaser.Scene {
       return true;
     });
 
-    this.updateTowerCountText();
+    this.refreshHUD(time);
   }
 
   private buildPathWaypoints(): Waypoint[] {
@@ -125,15 +176,14 @@ export class GameScene extends Phaser.Scene {
     ];
   }
 
-  private spawnGrunt(): void {
-    const enemy = new Enemy(this, this.path, GRUNT_CONFIG);
-    this.enemies.push(enemy);
+  private spawnEnemy(type: EnemyType): void {
+    const config: EnemyConfig = type === 'heavy' ? HEAVY_CONFIG : GRUNT_CONFIG;
+    this.enemies.push(new Enemy(this, this.path, config));
   }
 
   private wireInput(): void {
     this.input.on(Phaser.Input.Events.POINTER_MOVE, (pointer: Phaser.Input.Pointer) => {
-      const tile = this.pointerToTile(pointer);
-      this.hoverTile = tile;
+      this.hoverTile = this.pointerToTile(pointer);
       this.redrawHover();
     });
 
@@ -161,12 +211,18 @@ export class GameScene extends Phaser.Scene {
 
   private tryPlaceTower(col: number, row: number): void {
     if (!this.isPlaceable(col, row)) return;
+    const cost = PLACEHOLDER_TOWER_CONFIG.cost;
+    if (!this.economy.canAfford(cost)) {
+      this.flashFloatingText('Not enough gold!', this.scale.width / 2, 110, '#ff4444');
+      return;
+    }
+    this.economy.spend(cost);
     const T = GameScene.TILE_SIZE;
     const x = col * T + T / 2;
     const y = row * T + T / 2;
-    const tower = new Tower(this, col, row, x, y, PLACEHOLDER_TOWER_CONFIG);
-    this.towers.push(tower);
+    this.towers.push(new Tower(this, col, row, x, y, PLACEHOLDER_TOWER_CONFIG));
     this.occupiedTiles.add(this.tileKey(col, row));
+    this.towersPlaced++;
   }
 
   private tileKey(col: number, row: number): string {
@@ -179,11 +235,128 @@ export class GameScene extends Phaser.Scene {
     const T = GameScene.TILE_SIZE;
     const { col, row } = this.hoverTile;
     const placeable = this.isPlaceable(col, row);
-    const color = placeable ? 0x66ff66 : 0xff3344;
+    const affordable = this.economy.canAfford(PLACEHOLDER_TOWER_CONFIG.cost);
+    const ok = placeable && affordable;
+    const color = ok ? 0x66ff66 : 0xff3344;
     this.hoverGraphics.lineStyle(3, color, 0.85);
     this.hoverGraphics.strokeRect(col * T + 2, row * T + 2, T - 4, T - 4);
     this.hoverGraphics.fillStyle(color, 0.12);
     this.hoverGraphics.fillRect(col * T + 2, row * T + 2, T - 4, T - 4);
+  }
+
+  private drawHUD(): void {
+    this.add.text(20, 12, 'BIG APPLE DEFENSE', {
+      fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
+      fontSize: '20px',
+      color: '#fff200',
+      stroke: '#c1272d',
+      strokeThickness: 2,
+    });
+
+    this.hudGold = this.add.text(20, 40, '', {
+      fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+      fontSize: '18px',
+      color: '#fff200',
+      fontStyle: 'bold',
+    });
+
+    this.hudLives = this.add.text(180, 40, '', {
+      fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+      fontSize: '18px',
+      color: '#ff5566',
+      fontStyle: 'bold',
+    });
+
+    this.hudWave = this.add
+      .text(this.scale.width / 2, 20, '', {
+        fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
+        fontSize: '24px',
+        color: '#ffffff',
+      })
+      .setOrigin(0.5, 0);
+
+    this.hudHint = this.add.text(20, this.scale.height - 28, '', {
+      fontFamily: 'system-ui, sans-serif',
+      fontSize: '13px',
+      color: '#bbbbbb',
+      fontStyle: 'italic',
+    });
+
+    this.add
+      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.2 — M2 / C3', {
+        fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+        fontSize: '12px',
+        color: '#888888',
+      })
+      .setOrigin(1, 0);
+  }
+
+  private refreshHUD(time: number): void {
+    this.hudGold.setText(`💰 ${this.economy.gold}g`);
+
+    const filled = '❤'.repeat(this.economy.lives);
+    const empty = '♡'.repeat(this.economy.maxLives - this.economy.lives);
+    this.hudLives.setText(filled + empty);
+
+    const state = this.waveManager.getState();
+    const wave = this.waveManager.getCurrentWaveNumber();
+    const total = this.waveManager.getTotalWaves();
+    let waveText = `Wave ${wave}/${total}`;
+    if (state === 'prep') {
+      const remaining = Math.ceil(this.waveManager.getPrepRemainingMs(time) / 1000);
+      waveText = `Wave ${wave}/${total} starts in ${remaining}…`;
+    } else if (state === 'spawning' || state === 'mopping_up') {
+      const remaining = this.waveManager.getEnemiesRemainingThisWave(this.enemies.length);
+      waveText = `Wave ${wave}/${total} — ${remaining} enemies left`;
+    } else if (state === 'all_done') {
+      waveText = `All waves cleared!`;
+    }
+    this.hudWave.setText(waveText);
+
+    const cost = PLACEHOLDER_TOWER_CONFIG.cost;
+    this.hudHint.setText(`Click sidewalk to place tower (${cost}g) — green = can build, red = blocked`);
+  }
+
+  private flashFloatingText(text: string, x: number, y: number, color: string): void {
+    const t = this.add
+      .text(x, y, text, {
+        fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
+        fontSize: '28px',
+        color,
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5);
+    this.tweens.add({
+      targets: t,
+      y: y - 40,
+      alpha: 0,
+      duration: 1400,
+      ease: 'Quad.easeOut',
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  private endGame(won: boolean): void {
+    if (this.gameOver) return;
+    this.gameOver = true;
+
+    const data: GameOverData = {
+      won,
+      waveReached: this.waveManager.getCurrentWaveNumber(),
+      totalWaves: this.waveManager.getTotalWaves(),
+      kills: this.economy.kills,
+      towersPlaced: this.towersPlaced,
+      goldSpent: this.economy.goldSpent,
+      goldEarned: this.economy.goldEarned,
+      livesRemaining: this.economy.lives,
+    };
+
+    this.cameras.main.fadeOut(400, 0, 0, 0);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.scene.start('GameOverScene', data);
+    });
   }
 
   private drawBackground(): void {
@@ -202,7 +375,6 @@ export class GameScene extends Phaser.Scene {
   private drawGrid(): void {
     const g = this.add.graphics();
     const T = GameScene.TILE_SIZE;
-
     for (let c = 0; c < GameScene.GRID_COLS; c++) {
       for (let r = 0; r < GameScene.GRID_ROWS; r++) {
         if (!this.path.isOnPath(c, r, T)) {
@@ -211,7 +383,6 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
-
     g.lineStyle(1, 0x2a2a3a, 0.35);
     for (let c = 0; c <= GameScene.GRID_COLS; c++) {
       g.lineBetween(c * T, 0, c * T, GameScene.GRID_ROWS * T);
@@ -245,43 +416,5 @@ export class GameScene extends Phaser.Scene {
     center.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) center.lineTo(pts[i].x, pts[i].y);
     center.strokePath();
-  }
-
-  private drawHUDPlaceholder(): void {
-    this.add.text(20, 12, 'BIG APPLE DEFENSE', {
-      fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
-      fontSize: '20px',
-      color: '#fff200',
-      stroke: '#c1272d',
-      strokeThickness: 2,
-    });
-
-    this.add.text(20, 38, 'Click any sidewalk tile to place a tower', {
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: '13px',
-      color: '#bbbbbb',
-      fontStyle: 'italic',
-    });
-
-    this.towerCountText = this.add.text(this.scale.width - 20, 38, 'Towers: 0', {
-      fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-      fontSize: '13px',
-      color: '#ffffff',
-    });
-    this.towerCountText.setOrigin(1, 0);
-
-    this.add
-      .text(this.scale.width - 20, 12, 'v0.2.1 — M2 / C2', {
-        fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-        fontSize: '12px',
-        color: '#888888',
-      })
-      .setOrigin(1, 0);
-  }
-
-  private updateTowerCountText(): void {
-    if (this.towerCountText) {
-      this.towerCountText.setText(`Towers: ${this.towers.length}`);
-    }
   }
 }

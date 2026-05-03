@@ -3,7 +3,8 @@ import { PathSystem } from '../systems/PathSystem';
 
 /**
  * Base Enemy class. Walks the path from spawn to leak point at a given speed.
- * In M2 this is a placeholder grunt rendered as a colored circle.
+ * In M2 there are two placeholder types: grunt (cheap, fast-ish, low HP) and
+ * heavy (slow, tanky). Both rendered as colored circles.
  */
 export interface EnemyConfig {
   readonly hp: number;
@@ -76,10 +77,8 @@ export class Enemy {
     const h = 4;
     const y = -this.config.radius - 8;
     this.hpBar.clear();
-    // Background
     this.hpBar.fillStyle(0x000000, 0.6);
     this.hpBar.fillRect(-w / 2, y, w, h);
-    // Foreground
     const ratio = this.hp / this.maxHp;
     const fillColor = ratio > 0.5 ? 0x66ff66 : ratio > 0.25 ? 0xffaa00 : 0xff3333;
     this.hpBar.fillStyle(fillColor, 1);
@@ -87,11 +86,20 @@ export class Enemy {
   }
 }
 
-/** Standard grunt — basic enemy used in M2 placeholder waves. */
+/** Standard grunt — basic enemy, low HP, normal speed, alien green. */
 export const GRUNT_CONFIG: EnemyConfig = {
   hp: 60,
   speed: 70,
   radius: 14,
-  color: 0x7cf28a, // alien green
+  color: 0x7cf28a,
   goldReward: 10,
+};
+
+/** Heavy — tanky alien, slow, high HP, acid purple. Introduced wave 3. */
+export const HEAVY_CONFIG: EnemyConfig = {
+  hp: 220,
+  speed: 50,
+  radius: 22,
+  color: 0x8a2be2,
+  goldReward: 30,
 };

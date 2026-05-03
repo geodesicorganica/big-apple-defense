@@ -11,6 +11,10 @@
  *      with new tower range.
  *
  * Balance history (most-recent first):
+ *   v0.3.4 — M3/C5 Bull Market passive: Finance Bros tower damage scales
+ *            with gold on hand, capped at +50% (1000g hits the cap). Run
+ *            expanded 3 → 6 waves (3122 → 10030 HP) so the late-game
+ *            economy actually has time to breathe and Bull Market matters.
  *   v0.3.3 — Hedge Fund tower added: 0 dmg, 240px aura, 300g, +50% damage
  *            multiplier on enemies in range (per GDD §4)
  *   v0.3.1 — Quant range 480→360, Trader range 320→160 (player feedback:
@@ -136,6 +140,42 @@ export const TOWER_NAMES: Record<TowerType, string> = {
  */
 export const SCORING_REFERENCE_TOWER: TowerConfig = QUANT_TOWER;
 
+// ---- Bull Market — Finance Bros signature passive (per GDD §4) -------
+
+/**
+ * Finance Bros' clan signature: tower damage scales with gold on hand. The
+ * more cash you hoard, the harder Quant + Trader hit. Hedge Fund deals 0
+ * direct damage so it isn't affected (its aura buff stacks multiplicatively
+ * on top of Bull Market damage when both apply to the same enemy).
+ *
+ * Strategic tension this creates:
+ *   - Spend gold now → fewer towers but faster ramp.
+ *   - Hoard → fewer towers but each shot hits harder.
+ *   - Sweet spot is usually 1–2 strong towers + visible reserve.
+ *
+ * Numbers (v0.3.4 first pass; expect to retune after playtest):
+ *   - 0g    → 1.00x (baseline)
+ *   - 200g  → 1.10x (+10%, kicks in early)
+ *   - 500g  → 1.25x (+25%, mid-run reward for restraint)
+ *   - 1000g → 1.50x (cap; saving past this is wasted)
+ */
+export const BULL_MARKET = {
+  /** Maximum damage multiplier achievable. 1.5 = +50% damage at the cap. */
+  capMultiplier: 1.5,
+  /** Gold balance at which the cap is reached. Linear from 0 to this. */
+  fullBoostGold: 1000,
+} as const;
+
+/**
+ * Compute Bull Market damage multiplier from current gold. Linear ramp from
+ * 1.0 at 0g to BULL_MARKET.capMultiplier at fullBoostGold; held flat after.
+ * Hot path — keep this branchless and fast.
+ */
+export function getBullMarketMultiplier(gold: number): number {
+  const ratio = Math.min(Math.max(gold, 0) / BULL_MARKET.fullBoostGold, 1);
+  return 1 + (BULL_MARKET.capMultiplier - 1) * ratio;
+}
+
 // ---- Enemy stats ----------------------------------------------------
 
 /** Standard grunt — basic enemy, alien green. */
@@ -159,11 +199,24 @@ export const HEAVY_CONFIG: EnemyConfig = {
 // ---- Wave configuration ---------------------------------------------
 
 /**
- * 3 waves total — gentle intro, volume test, mixed-threat finale. Each
- * WaveStep entry is one enemy spawn with the delay (in ms) before that spawn,
- * relative to the previous spawn or wave start.
+ * 6 waves total — early waves are tutorial-light, later waves test the full
+ * tower kit and the Bull Market economy. Each WaveStep entry is one enemy
+ * spawn with the delay (in ms) before that spawn, relative to the previous
+ * spawn or wave start.
  *
- * Replaced in M3 by clan-aware wave configs once the GDD §7 wave plan lands.
+ * Progression intent (v0.3.4):
+ *   W1–W2: learn placement, no heavies. Light gold so Bull Market doesn't
+ *          really kick in. (1564 HP combined)
+ *   W3:    first heavies appear; teaches "damage burst" matters.
+ *          (1558 HP)
+ *   W4:    heavy push — 5 heavies in a row; tests sustained DPS, the moment
+ *          Hedge Fund's aura really pays off. (1894 HP)
+ *   W5:    swarm — high volume of grunts with a heavy nudge in the middle.
+ *          Tests path coverage; rewards Trader spam. (2036 HP)
+ *   W6:    finale — alternating heavy/grunt barrages. Player should be
+ *          sitting on a fat Bull Market reserve. (2978 HP)
+ *
+ * Replaced in M4+ by clan-aware wave configs once we wire other clans.
  */
 export const WAVE_DEFINITIONS: ReadonlyArray<ReadonlyArray<WaveStep>> = [
   // Wave 1 — intro: 9 grunts at 0.95s intervals
@@ -178,10 +231,36 @@ export const WAVE_DEFINITIONS: ReadonlyArray<ReadonlyArray<WaveStep>> = [
     ['heavy', 3, 1450],
     ['grunt', 5, 600],
   ]),
+
+  // Wave 4 — heavy push: 5 heavies sandwiched by grunts (sustained damage test)
+  buildWave([
+    ['grunt', 4, 750],
+    ['heavy', 5, 1150],
+    ['grunt', 4, 650],
+  ]),
+
+  // Wave 5 — swarm: high-volume grunts with a couple heavies mid-stream
+  buildWave([
+    ['grunt', 12, 500],
+    ['heavy', 2, 1300],
+    ['grunt', 10, 500],
+  ]),
+
+  // Wave 6 — finale: alternating heavy/grunt barrages, tight intervals
+  buildWave([
+    ['heavy', 3, 1100],
+    ['grunt', 10, 550],
+    ['heavy', 4, 1000],
+    ['grunt', 6, 500],
+  ]),
 ];
 
-/** Gold awarded for clearing each wave, indexed by wave number - 1. */
-export const WAVE_REWARDS: ReadonlyArray<number> = [50, 35, 55];
+/**
+ * Gold awarded for clearing each wave, indexed by wave number - 1.
+ * Scales with wave difficulty so the player has fuel to keep building +
+ * a Bull Market cushion in late game.
+ */
+export const WAVE_REWARDS: ReadonlyArray<number> = [50, 35, 55, 70, 85, 100];
 
 /** Countdown time (ms) before each wave begins spawning. */
 export const WAVE_PREP_MS = 3000;

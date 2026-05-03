@@ -42,8 +42,18 @@ export class Tower {
   private readonly body: Phaser.GameObjects.Rectangle;
   private readonly accent: Phaser.GameObjects.Arc;
   private auraRing: Phaser.GameObjects.Arc | null = null;
+  private boostRing: Phaser.GameObjects.Arc | null = null;
 
   private lastFireTime = -Infinity;
+
+  /**
+   * Damage multiplier from external buffs (Bull Market, future clan
+   * passives). Default 1.0. Applied to projectile damage at fire time and
+   * drives the green "boost ring" visual when above 1.0.
+   * The scene calls setDamageMultiplier() each frame; we cache so we only
+   * touch the visual when the value actually changes.
+   */
+  private damageMultiplier = 1.0;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -104,6 +114,24 @@ export class Tower {
     return this.config.range * this.config.range;
   }
 
+  /**
+   * External buff multiplier (Bull Market, etc.). The scene calls this each
+   * frame; we no-op when nothing changed, and update the green boost ring
+   * visual only on real transitions. Aura towers track the value (in case
+   * future passives matter to them) but don't show the ring since they
+   * deal no damage.
+   */
+  setDamageMultiplier(value: number): void {
+    if (Math.abs(value - this.damageMultiplier) < 0.001) return;
+    this.damageMultiplier = value;
+    if (this.isAura()) return;
+    this.refreshBoostRing();
+  }
+
+  getDamageMultiplier(): number {
+    return this.damageMultiplier;
+  }
+
   /** Tick the tower's targeting logic. Returns a new Projectile if the tower fired. */
   update(currentTimeMs: number, enemies: Enemy[]): Projectile | null {
     // Aura towers don't fire — the scene applies their effect each frame.
@@ -128,7 +156,7 @@ export class Tower {
       this.x,
       this.y,
       target,
-      this.config.damage,
+      this.config.damage * this.damageMultiplier,
       this.config.accentColor
     );
   }
@@ -137,6 +165,8 @@ export class Tower {
     this.sprite.destroy();
     this.auraRing?.destroy();
     this.auraRing = null;
+    this.boostRing?.destroy();
+    this.boostRing = null;
   }
 
   private findNearestTargetInRange(enemies: Enemy[]): Enemy | null {
@@ -190,6 +220,37 @@ export class Tower {
       repeat: -1,
       ease: 'Sine.easeInOut',
     });
+  }
+
+  /**
+   * Sync the green Bull Market boost ring with the current damageMultiplier.
+   * Lazy-creates the ring on first non-zero boost; alpha scales with the
+   * size of the buff so a small reserve looks subtle and a fat reserve looks
+   * obvious. Tied to the sprite container so it spawns/dies with the tower.
+   */
+  private refreshBoostRing(): void {
+    const boost = Math.max(0, this.damageMultiplier - 1);
+
+    if (boost <= 0.001) {
+      // Hide ring when no boost; keep the object so we don't churn alloc.
+      if (this.boostRing) this.boostRing.setVisible(false);
+      return;
+    }
+
+    if (!this.boostRing) {
+      this.boostRing = this.scene.add.circle(0, 0, 32, 0x10b981, 0);
+      this.boostRing.setStrokeStyle(2, 0x10b981, 0);
+      this.sprite.add(this.boostRing);
+      this.sprite.sendToBack(this.boostRing);
+    }
+
+    // Cap visual at +50%; alpha 0..0.55 fill, 0..0.85 stroke.
+    const v = Math.min(boost / 0.5, 1);
+    this.boostRing.setVisible(true);
+    this.boostRing.setFillStyle(0x10b981, v * 0.25);
+    this.boostRing.setStrokeStyle(2, 0x10b981, 0.3 + v * 0.55);
+    // Subtle radius bump so a maxed ring reads as "expanded" cash-glow.
+    this.boostRing.setRadius(32 + v * 4);
   }
 }
 

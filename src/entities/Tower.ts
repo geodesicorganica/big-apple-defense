@@ -128,13 +128,16 @@ export class Tower {
  * M2 placeholder tower — single type, no clan logic yet.
  *
  * Balance history:
- *   v0.2.2 (original): 22 dmg / 600ms / 200 range — too easy
- *   v0.2.3 (hard):     14 dmg / 850ms / 175 range — too hard, lost on W1/2
- *   v0.2.4 (current):  midpoint pass, dialed back halfway
+ *   v0.2.2: 22 dmg / 600ms / 200 range — too easy
+ *   v0.2.3: 14 dmg / 850ms / 175 range — too hard
+ *   v0.2.4: 18 dmg / 725ms / 185 range — close but range too long
+ *   v0.2.5: range cut to 160 (~25% less coverage area), damage/fire rate
+ *           unchanged so individual tower output is the same; you just need
+ *           more of them to cover the path
  */
 export const PLACEHOLDER_TOWER_CONFIG: TowerConfig = {
   damage: 18,
-  range: 185,
+  range: 160,
   fireRateMs: 725,
   bodyColor: 0x1a2a44,
   accentColor: 0xd4af37,

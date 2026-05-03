@@ -26,9 +26,11 @@ export class GameScene extends Phaser.Scene {
   static readonly GRID_COLS = 16;
   static readonly GRID_ROWS = 9;
 
-  // Balance history: 200g/5L (too easy) → 150g/3L (too hard) → 175g/4L (midpoint).
-  // 175g buys 2 towers (150g) with 25g spare for a 3rd-tower buy after first kills.
-  static readonly STARTING_GOLD = 175;
+  // Balance history: 200g/5L (easy) → 150g/3L (hard) → 175g/4L (midpoint, gold pooled)
+  //                  → 150g/4L (v0.2.5: starting buffer trimmed; lives kept at 4).
+  // 150g buys exactly 2 towers turn 1 (no spare); income cut elsewhere prevents
+  // late-game pooling.
+  static readonly STARTING_GOLD = 150;
   static readonly STARTING_LIVES = 4;
 
   private path!: PathSystem;
@@ -289,7 +291,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.add
-      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.4 — M2 / C5 (retune)', {
+      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.5 — M2 / C6 (gold + range)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',

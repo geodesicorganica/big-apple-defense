@@ -51,4 +51,11 @@ export const WAVE_DEFINITIONS: ReadonlyArray<ReadonlyArray<WaveStep>> = [
   ]),
 ];
 
-export const WAVE_REWARDS: ReadonlyArray<number> = [40, 55, 80];
+/**
+ * Wave clear bonuses.
+ *   v0.2.2: 50 / 70 / 100 — too easy
+ *   v0.2.3: 30 / 40 / 60  — too hard
+ *   v0.2.4: 40 / 55 / 80  — gold pooled
+ *   v0.2.5: 25 / 35 / 55  — pulled below v0.2.3 to drain the late-game pool
+ */
+export const WAVE_REWARDS: ReadonlyArray<number> = [25, 35, 55];

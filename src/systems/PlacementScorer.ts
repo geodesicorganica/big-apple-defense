@@ -113,6 +113,30 @@ export class PlacementScorer {
     return this.maxRawScore;
   }
 
+  /**
+   * Compute path-in-range for a tile against an ARBITRARY range (not the
+   * scorer's constructor range). Used by BalanceSimulator to evaluate
+   * tower-specific placement value (Quant vs Trader have different ranges).
+   * Not cached — recomputed on each call.
+   */
+  scoreTileAtRange(col: number, row: number, range: number): number {
+    if (this.path.isOnPath(col, row, this.tileSize)) return 0;
+    const cx = col * this.tileSize + this.tileSize / 2;
+    const cy = row * this.tileSize + this.tileSize / 2;
+    const rangeSq = range * range;
+    const totalLength = this.path.totalLength;
+    let inRange = 0;
+    for (let dist = 0; dist <= totalLength; dist += PlacementScorer.STEP_PX) {
+      const pos = this.path.getPositionAtDistance(dist);
+      const dx = pos.x - cx;
+      const dy = pos.y - cy;
+      if (dx * dx + dy * dy <= rangeSq) {
+        inRange += PlacementScorer.STEP_PX;
+      }
+    }
+    return inRange;
+  }
+
   private gradeFor(normalized: number, raw: number): PlacementGrade {
     if (raw === 0) return 'F';
     if (normalized >= 0.85) return 'S';

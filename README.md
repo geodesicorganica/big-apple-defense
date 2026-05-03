@@ -55,3 +55,7 @@ Game Design Document lives in the agent thread at version 0.3 — source of trut
 ## License
 
 TBD
+
+---
+
+*Last verified deploy: 2026-05-03 — auto-deploy via Vercel GitHub App.*

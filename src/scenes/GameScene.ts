@@ -18,6 +18,8 @@ import {
   WAVE_DEFINITIONS,
   WAVE_REWARDS,
   EnemyType,
+  BULL_MARKET,
+  getBullMarketMultiplier,
 } from '../balance';
 import { PlacementPopup } from '../ui/PlacementPopup';
 import type { GameOverData } from './GameOverScene';
@@ -168,6 +170,12 @@ export class GameScene extends Phaser.Scene {
     const deltaSeconds = delta / 1000;
     for (const enemy of this.enemies) enemy.update(deltaSeconds);
 
+    // Apply Bull Market damage scaling to every tower BEFORE they fire so
+    // this frame's projectiles carry the up-to-date boost. Cheap: one
+    // multiplier read + one comparison per tower (Tower.setDamageMultiplier
+    // no-ops when nothing changed).
+    this.applyBullMarketEffect();
+
     // Apply aura effects BEFORE towers fire / projectiles hit, so any
     // damage applied this frame uses the up-to-date multiplier.
     this.applyAuraEffects();
@@ -239,6 +247,19 @@ export class GameScene extends Phaser.Scene {
   private spawnEnemy(type: EnemyType): void {
     const config: EnemyConfig = type === 'heavy' ? HEAVY_CONFIG : GRUNT_CONFIG;
     this.enemies.push(new Enemy(this, this.path, config));
+  }
+
+  /**
+   * Push the current Bull Market multiplier into every tower. The multiplier
+   * comes from current gold (per balance.getBullMarketMultiplier). Hot path —
+   * called once per frame; Tower.setDamageMultiplier is a cheap no-op when
+   * the value hasn't changed.
+   */
+  private applyBullMarketEffect(): void {
+    const mult = getBullMarketMultiplier(this.economy.gold);
+    for (const tower of this.towers) {
+      tower.setDamageMultiplier(mult);
+    }
   }
 
   /**
@@ -489,7 +510,7 @@ export class GameScene extends Phaser.Scene {
 
     // Version tag (top-right corner)
     this.add
-      .text(this.scale.width - 20, 12, 'v0.3.3 — M3 / C4 (Hedge Fund aura)', {
+      .text(this.scale.width - 20, 12, 'v0.3.4 — M3 / C5 (Bull Market + 6 waves)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',
@@ -498,8 +519,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private refreshHUD(time: number): void {
-    // Gold
-    this.hudGold.setText(`💰 ${this.economy.gold}g`);
+    // Gold + Bull Market indicator. Once you hit the cap the suffix locks
+    // at "+50% Bull (max)" so the player knows hoarding past 1000g is wasted.
+    const bullMult = getBullMarketMultiplier(this.economy.gold);
+    const bullPct = Math.round((bullMult - 1) * 100);
+    let goldText = `💰 ${this.economy.gold}g`;
+    if (bullPct > 0) {
+      const atCap = this.economy.gold >= BULL_MARKET.fullBoostGold;
+      goldText += atCap ? `  +${bullPct}% Bull (max)` : `  +${bullPct}% Bull`;
+    }
+    this.hudGold.setText(goldText);
 
     // Lives — heart icons
     const filled = '❤'.repeat(this.economy.lives);
@@ -633,7 +662,10 @@ export class GameScene extends Phaser.Scene {
       `  Hedge Fund: aura ×${hedgeFundBoost} | range ${TOWERS.hedge_fund.range}px | cost ${TOWERS.hedge_fund.cost}g (no direct damage; buffs other towers)`
     );
     console.log(
-      `  Run total: ${runEnemies} enemies, ${runHp} HP (grunt ${grunt}, heavy ${heavy})`
+      `  Bull Market: dmg ×1.0 → ×${BULL_MARKET.capMultiplier} as gold goes 0 → ${BULL_MARKET.fullBoostGold}g (+${Math.round((BULL_MARKET.capMultiplier - 1) * 100)}% cap)`
+    );
+    console.log(
+      `  Run total: ${runEnemies} enemies, ${runHp} HP across ${WAVE_DEFINITIONS.length} waves (grunt ${grunt}, heavy ${heavy})`
     );
     console.log(
       '  Press G in-game to toggle the grade overlay; click any tile to choose a tower.'

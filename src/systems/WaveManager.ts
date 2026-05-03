@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { WaveStep } from './WaveData';
+import { WaveStep, WAVE_PREP_MS } from '../balance';
 
 export type WaveState = 'prep' | 'spawning' | 'mopping_up' | 'awaiting_advance' | 'all_done';
 
@@ -18,8 +18,6 @@ export type WaveState = 'prep' | 'spawning' | 'mopping_up' | 'awaiting_advance' 
  *  - When state == 'awaiting_advance', credit the wave reward and call advance()
  */
 export class WaveManager {
-  private static readonly PREP_MS = 3000;
-
   private waveIndex = 0;
   private state: WaveState = 'prep';
   private steps: ReadonlyArray<WaveStep> = [];
@@ -121,6 +119,6 @@ export class WaveManager {
     this.steps = this.waves[index];
     this.nextStepIndex = 0;
     this.state = 'prep';
-    this.prepEndsAt = this.scene.time.now + WaveManager.PREP_MS;
+    this.prepEndsAt = this.scene.time.now + WAVE_PREP_MS;
   }
 }

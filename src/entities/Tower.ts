@@ -124,11 +124,17 @@ export class Tower {
   }
 }
 
-/** M2 placeholder tower — single type, no clan logic yet. */
+/**
+ * M2 placeholder tower — single type, no clan logic yet.
+ *
+ * v0.2.3 difficulty pass: damage / fire rate / range all reduced so that one
+ * tower can barely kill one grunt per visit — players must spread coverage
+ * across the path rather than stacking one chokepoint.
+ */
 export const PLACEHOLDER_TOWER_CONFIG: TowerConfig = {
-  damage: 22,
-  range: 200,
-  fireRateMs: 600,
+  damage: 14,
+  range: 175,
+  fireRateMs: 850,
   bodyColor: 0x1a2a44,
   accentColor: 0xd4af37,
   cost: 75,

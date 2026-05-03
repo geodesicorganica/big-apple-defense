@@ -27,19 +27,24 @@ function buildWave(groups: Array<readonly [EnemyType, number, number]>): WaveSte
   return steps;
 }
 
+/**
+ * v0.2.3 difficulty pass: more enemies per wave, faster spawn cadence, more
+ * heavies in W3. Combined with tougher per-enemy stats this raises wave
+ * pressure substantially.
+ */
 export const WAVE_DEFINITIONS: ReadonlyArray<ReadonlyArray<WaveStep>> = [
-  // Wave 1 — intro: 8 grunts at 1.0s intervals
-  buildWave([['grunt', 8, 1000]]),
+  // Wave 1 — intro: 10 grunts at 0.9s intervals
+  buildWave([['grunt', 10, 900]]),
 
-  // Wave 2 — volume: 12 grunts at 0.8s intervals
-  buildWave([['grunt', 12, 800]]),
+  // Wave 2 — volume: 16 grunts at 0.7s intervals (faster pace)
+  buildWave([['grunt', 16, 700]]),
 
-  // Wave 3 — mixed threat: grunts → heavies → grunts
+  // Wave 3 — mixed threat: grunts → heavies (4!) → grunts
   buildWave([
-    ['grunt', 5, 700],
-    ['heavy', 3, 1500],
-    ['grunt', 4, 600],
+    ['grunt', 6, 650],
+    ['heavy', 4, 1400],
+    ['grunt', 6, 550],
   ]),
 ];
 
-export const WAVE_REWARDS: ReadonlyArray<number> = [50, 70, 100];
+export const WAVE_REWARDS: ReadonlyArray<number> = [30, 40, 60];

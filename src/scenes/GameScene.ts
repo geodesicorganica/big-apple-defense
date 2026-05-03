@@ -17,14 +17,19 @@ import type { GameOverData } from './GameOverScene';
  *  - Projectiles deal damage; kills earn gold; leaks cost lives
  *  - Win = all 3 waves cleared with lives > 0
  *  - Lose = lives reach 0 → GameOverScene with stats + retry
+ *
+ *  HUD overlay (top-left to top-right):
+ *    [💰 Gold] [❤ Lives] [Wave status / countdown]
  */
 export class GameScene extends Phaser.Scene {
   static readonly TILE_SIZE = 80;
   static readonly GRID_COLS = 16;
   static readonly GRID_ROWS = 9;
 
-  static readonly STARTING_GOLD = 200;
-  static readonly STARTING_LIVES = 5;
+  // v0.2.3 difficulty pass: starting gold halved (rounded), lives 5 → 3.
+  // Player can buy exactly 2 towers turn 1 (150 / 75 = 2) and every leak hurts.
+  static readonly STARTING_GOLD = 150;
+  static readonly STARTING_LIVES = 3;
 
   private path!: PathSystem;
   private economy!: Economy;
@@ -283,7 +288,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.add
-      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.2 — M2 / C3', {
+      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.3 — M2 / C4 (balance)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',

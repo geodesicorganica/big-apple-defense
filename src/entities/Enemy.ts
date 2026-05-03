@@ -27,6 +27,13 @@ export class Enemy {
   public reachedEnd = false;
   public dead = false;
 
+  /**
+   * Multiplier on incoming damage. Default 1.0 (no buff). Aura towers (e.g.
+   * Hedge Fund) raise this above 1.0 for enemies in their range. The scene
+   * sets it every frame; takeDamage() uses it at hit time.
+   */
+  private _damageMultiplier = 1.0;
+
   constructor(
     scene: Phaser.Scene,
     private readonly path: PathSystem,
@@ -61,11 +68,31 @@ export class Enemy {
 
   takeDamage(amount: number): void {
     if (this.dead) return;
-    this.hp = Math.max(0, this.hp - amount);
+    const adjusted = amount * this._damageMultiplier;
+    this.hp = Math.max(0, this.hp - adjusted);
     this.drawHpBar();
     if (this.hp <= 0) {
       this.dead = true;
     }
+  }
+
+  /**
+   * Set the damage-multiplier for this enemy (1.0 = no buff). Updates the
+   * body stroke color so the player can see at a glance which enemies are
+   * boosted by an aura.
+   */
+  setDamageMultiplier(value: number): void {
+    if (Math.abs(value - this._damageMultiplier) < 0.001) return;
+    this._damageMultiplier = value;
+    if (value > 1.0) {
+      this.body.setStrokeStyle(3, 0xfff200, 1); // bright yellow = "exposed"
+    } else {
+      this.body.setStrokeStyle(2, 0x000000, 0.6); // default
+    }
+  }
+
+  get damageMultiplier(): number {
+    return this._damageMultiplier;
   }
 
   destroy(): void {

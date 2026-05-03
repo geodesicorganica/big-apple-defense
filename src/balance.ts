@@ -11,6 +11,8 @@
  *      with new tower range.
  *
  * Balance history (most-recent first):
+ *   v0.3.3 — Hedge Fund tower added: 0 dmg, 240px aura, 300g, +50% damage
+ *            multiplier on enemies in range (per GDD §4)
  *   v0.3.1 — Quant range 480→360, Trader range 320→160 (player feedback:
  *            "low-level tower shouldn't shoot across 3 tiles")
  *   v0.3.0 — M3 Finance Bros: replaced placeholder tower with Quant + Trader
@@ -56,9 +58,10 @@ export const STARTING_LIVES = 4;
 
 /**
  * Identifier for a tower type. Used for selection UI and the TOWERS map.
- * M3/C1 ships Quant + Trader; Hedge Fund arrives in C2.
+ * Finance Bros loadout: Quant (sniper) + Trader (rapid-fire) + Hedge Fund
+ * (passive damage-buff aura).
  */
-export type TowerType = 'quant' | 'trader';
+export type TowerType = 'quant' | 'trader' | 'hedge_fund';
 
 /**
  * Quant — Finance Bros sniper. High-DPS single target, long range. The
@@ -94,16 +97,36 @@ export const TRADER_TOWER: TowerConfig = {
   cost: 75,
 };
 
+/**
+ * Hedge Fund — Finance Bros premium support. No direct damage; passive aura
+ * makes enemies in radius take +50% damage from any source. Per GDD §4–5.
+ *
+ * Strategic role: forces overlapping placement with damage towers. A Hedge
+ * Fund placed alone is wasted; placed near a clustered Quant + Trader
+ * pocket, it effectively boosts their DPS by 50% in that zone.
+ */
+export const HEDGE_FUND_TOWER: TowerConfig = {
+  damage: 0,
+  range: 240, // 3 tiles × 80px
+  fireRateMs: 1000, // unused (aura tower) but kept for type consistency
+  bodyColor: 0x1a2a44, // Wall Street navy
+  accentColor: 0x10b981, // emerald
+  cost: 300,
+  aura: { damageMultiplier: 1.5 }, // +50% damage to enemies in range
+};
+
 /** Tower configs indexed by TowerType. */
 export const TOWERS: Record<TowerType, TowerConfig> = {
   quant: QUANT_TOWER,
   trader: TRADER_TOWER,
+  hedge_fund: HEDGE_FUND_TOWER,
 };
 
 /** Display names for tower types (used by the palette UI). */
 export const TOWER_NAMES: Record<TowerType, string> = {
   quant: 'QUANT',
   trader: 'TRADER',
+  hedge_fund: 'HEDGE FUND',
 };
 
 /**

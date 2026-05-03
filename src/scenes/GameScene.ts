@@ -22,7 +22,22 @@ import {
 import { PlacementPopup } from '../ui/PlacementPopup';
 import type { GameOverData } from './GameOverScene';
 
+/**
+ * GameScene — full M2 core loop.
+ *
+ *  - 16x9 grid (80px tiles) with hardcoded Times Square S-curve path
+ *  - 3 waves driven by WaveManager (3-sec prep, spawn schedule, mop-up gate)
+ *  - Tower placement: click sidewalk, pay gold, tower fires at nearest enemy
+ *  - Projectiles deal damage; kills earn gold; leaks cost lives
+ *  - Win = all 3 waves cleared with lives > 0
+ *  - Lose = lives reach 0 → GameOverScene with stats + retry
+ *
+ *  HUD overlay (top-left to top-right):
+ *    [💰 Gold] [❤ Lives] [Wave status / countdown]
+ */
 export class GameScene extends Phaser.Scene {
+  // Layout constants — these are NOT balance numbers (changing them changes the
+  // grid geometry, not difficulty). Tunable balance lives in src/balance.ts.
   static readonly TILE_SIZE = 80;
   static readonly GRID_COLS = 16;
   static readonly GRID_ROWS = 9;
@@ -53,6 +68,7 @@ export class GameScene extends Phaser.Scene {
   private gameOver = false;
   private towersPlaced = 0;
 
+  // HUD
   private hudGold!: Phaser.GameObjects.Text;
   private hudLives!: Phaser.GameObjects.Text;
   private hudWave!: Phaser.GameObjects.Text;
@@ -68,7 +84,11 @@ export class GameScene extends Phaser.Scene {
     this.path = new PathSystem(this.buildPathWaypoints());
     this.economy = new Economy(STARTING_GOLD, STARTING_LIVES);
     this.waveManager = new WaveManager(this, WAVE_DEFINITIONS);
-    this.scorer = new PlacementScorer(this.path, GameScene.TILE_SIZE, SCORING_REFERENCE_TOWER.range);
+    this.scorer = new PlacementScorer(
+      this.path,
+      GameScene.TILE_SIZE,
+      SCORING_REFERENCE_TOWER.range
+    );
     this.scorer.computeAllScores(GameScene.GRID_COLS, GameScene.GRID_ROWS);
     this.logBalanceSummary();
     BalanceSimulator.logFullAnalysis(this.scorer, STARTING_GOLD);
@@ -84,7 +104,6 @@ export class GameScene extends Phaser.Scene {
     this.gradeOverlayTexts = [];
     this.pendingTile = null;
     this.placementPopup = null;
-    this.popupClickConsumed = false;
 
     this.drawBackground();
     this.drawGrid();
@@ -120,7 +139,9 @@ export class GameScene extends Phaser.Scene {
 
     const enemiesOnField = this.enemies.length;
     const step = this.waveManager.update(time, enemiesOnField);
-    if (step) this.spawnEnemy(step.enemyType);
+    if (step) {
+      this.spawnEnemy(step.enemyType);
+    }
 
     if (this.waveManager.isAwaitingAdvance() && !this.waveManager.isAllDone()) {
       const waveIdx = this.waveManager.getCurrentWaveNumber() - 1;
@@ -135,13 +156,21 @@ export class GameScene extends Phaser.Scene {
       this.waveManager.advance();
     }
 
-    if (this.waveManager.isAllDone() && this.enemies.length === 0 && !this.gameOver) {
+    if (
+      this.waveManager.isAllDone() &&
+      this.enemies.length === 0 &&
+      !this.gameOver
+    ) {
       this.endGame(true);
       return;
     }
 
     const deltaSeconds = delta / 1000;
     for (const enemy of this.enemies) enemy.update(deltaSeconds);
+
+    // Apply aura effects BEFORE towers fire / projectiles hit, so any
+    // damage applied this frame uses the up-to-date multiplier.
+    this.applyAuraEffects();
 
     for (const tower of this.towers) {
       const projectile = tower.update(time, this.enemies);
@@ -150,6 +179,7 @@ export class GameScene extends Phaser.Scene {
 
     for (const projectile of this.projectiles) projectile.update(deltaSeconds);
 
+    // Cull dead/leaked entities and update economy
     const stillAlive: Enemy[] = [];
     for (const enemy of this.enemies) {
       if (enemy.dead) {
@@ -161,6 +191,7 @@ export class GameScene extends Phaser.Scene {
         enemy.destroy();
         if (ranOut) {
           this.endGame(false);
+          // Flush remaining cleanup but skip further game logic this frame
           this.enemies = [];
           this.projectiles = this.projectiles.filter((p) => {
             p.destroy();
@@ -185,10 +216,15 @@ export class GameScene extends Phaser.Scene {
     this.refreshHUD(time);
   }
 
+  // ---- Setup -----------------------------------------------------------
+
   private buildPathWaypoints(): Waypoint[] {
     const T = GameScene.TILE_SIZE;
     const half = T / 2;
-    const tile = (col: number, row: number) => ({ x: col * T + half, y: row * T + half });
+    const tile = (col: number, row: number) => ({
+      x: col * T + half,
+      y: row * T + half,
+    });
     return [
       { x: GameScene.GRID_COLS * T + T, y: 7 * T + half },
       tile(13, 7),
@@ -204,6 +240,31 @@ export class GameScene extends Phaser.Scene {
     const config: EnemyConfig = type === 'heavy' ? HEAVY_CONFIG : GRUNT_CONFIG;
     this.enemies.push(new Enemy(this, this.path, config));
   }
+
+  /**
+   * Walk every enemy × every aura tower and set each enemy's damage
+   * multiplier to the strongest aura covering it. Enemies outside any aura
+   * reset to 1.0. Called once per frame before towers fire.
+   */
+  private applyAuraEffects(): void {
+    // Collect aura towers up front to avoid re-checking per enemy.
+    const auraTowers = this.towers.filter((t) => t.isAura());
+
+    for (const enemy of this.enemies) {
+      if (enemy.dead || enemy.reachedEnd) continue;
+      let multiplier = 1.0;
+      for (const tower of auraTowers) {
+        const dx = enemy.sprite.x - tower.x;
+        const dy = enemy.sprite.y - tower.y;
+        if (dx * dx + dy * dy <= tower.getRangeSq()) {
+          multiplier = Math.max(multiplier, tower.getAuraMultiplier());
+        }
+      }
+      enemy.setDamageMultiplier(multiplier);
+    }
+  }
+
+  // ---- Input -----------------------------------------------------------
 
   private wireInput(): void {
     this.input.on(Phaser.Input.Events.POINTER_MOVE, (pointer: Phaser.Input.Pointer) => {
@@ -227,27 +288,33 @@ export class GameScene extends Phaser.Scene {
 
       const tile = this.pointerToTile(pointer);
       if (!tile) {
+        // Clicked outside any tile (and outside popup) — cancel.
         this.cancelPlacement();
         return;
       }
 
+      // Clicked a placeable tile: open popup at that tile.
       if (this.isPlaceable(tile.col, tile.row)) {
         this.openPlacementPopup(tile.col, tile.row);
       } else {
+        // Path / occupied tile — cancel any open popup.
         this.cancelPlacement();
       }
     });
 
+    // Press G to toggle the placement-grade overlay across all placeable tiles.
     this.input.keyboard?.on('keydown-G', () => {
       this.gradesVisible = !this.gradesVisible;
       this.renderGradeOverlay();
     });
 
+    // Press Escape to cancel an open popup.
     this.input.keyboard?.on('keydown-ESC', () => {
       this.cancelPlacement();
     });
   }
 
+  /** Open the placement popup over a tile. Cancels any prior popup. */
   private openPlacementPopup(col: number, row: number): void {
     this.cancelPlacement();
     this.pendingTile = { col, row };
@@ -262,11 +329,11 @@ export class GameScene extends Phaser.Scene {
       tileCenterX,
       tileCenterY,
       T,
-      ['quant', 'trader'],
+      ['quant', 'trader', 'hedge_fund'],
       {
         onPick: (type) => {
-          // Mark click consumed BEFORE any state changes so the scene-level
-          // pointerdown that fires next ignores this click.
+          // Mark click consumed BEFORE any popup-state changes so the
+          // scene-level pointerdown that fires next ignores this click.
           this.popupClickConsumed = true;
           this.commitPlacement(type);
         },
@@ -284,7 +351,7 @@ export class GameScene extends Phaser.Scene {
    *
    * Behavior:
    *   - Affordable + placeable: place tower, close popup.
-   *   - Unaffordable: flash 'Not enough gold!' but KEEP popup open. The
+   *   - Unaffordable: flash "Not enough gold!" but KEEP popup open. The
    *     popup auto-refreshes affordability each frame, so the user can wait
    *     for kills/wave bonus to push gold over the threshold and click again.
    *   - Tile no longer placeable: cancel.
@@ -312,6 +379,7 @@ export class GameScene extends Phaser.Scene {
     this.cancelPlacement();
   }
 
+  /** Close the popup and clear the pending tile. */
   private cancelPlacement(): void {
     this.placementPopup?.destroy();
     this.placementPopup = null;
@@ -319,6 +387,7 @@ export class GameScene extends Phaser.Scene {
     this.pendingHighlight.clear();
   }
 
+  /** Highlight the pending tile while popup is open. */
   private drawPendingHighlight(): void {
     this.pendingHighlight.clear();
     if (!this.pendingTile) return;
@@ -352,6 +421,7 @@ export class GameScene extends Phaser.Scene {
   private redrawHover(): void {
     this.hoverGraphics.clear();
     if (!this.hoverTile) return;
+    // Don't draw hover preview over the pending tile (it has its own yellow highlight).
     if (
       this.pendingTile &&
       this.hoverTile.col === this.pendingTile.col &&
@@ -369,7 +439,10 @@ export class GameScene extends Phaser.Scene {
     this.hoverGraphics.fillRect(col * T + 2, row * T + 2, T - 4, T - 4);
   }
 
+  // ---- HUD -------------------------------------------------------------
+
   private drawHUD(): void {
+    // Top-left: title
     this.add.text(20, 12, 'BIG APPLE DEFENSE', {
       fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
       fontSize: '20px',
@@ -378,6 +451,7 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 2,
     });
 
+    // Gold
     this.hudGold = this.add.text(20, 40, '', {
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: '18px',
@@ -385,6 +459,7 @@ export class GameScene extends Phaser.Scene {
       fontStyle: 'bold',
     });
 
+    // Lives
     this.hudLives = this.add.text(180, 40, '', {
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: '18px',
@@ -392,6 +467,7 @@ export class GameScene extends Phaser.Scene {
       fontStyle: 'bold',
     });
 
+    // Wave status (top center)
     this.hudWave = this.add
       .text(this.scale.width / 2, 20, '', {
         fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
@@ -400,6 +476,8 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
+    // Hint (top-center, below wave indicator). Updates on hover with placement
+    // grade info from the scorer.
     this.hudHint = this.add
       .text(this.scale.width / 2, 50, '', {
         fontFamily: 'system-ui, sans-serif',
@@ -409,8 +487,9 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
+    // Version tag (top-right corner)
     this.add
-      .text(this.scale.width - 20, 12, 'v0.3.2 — M3 / C3 (popup fixes)', {
+      .text(this.scale.width - 20, 12, 'v0.3.3 — M3 / C4 (Hedge Fund aura)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',
@@ -419,12 +498,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   private refreshHUD(time: number): void {
+    // Gold
     this.hudGold.setText(`💰 ${this.economy.gold}g`);
 
+    // Lives — heart icons
     const filled = '❤'.repeat(this.economy.lives);
     const empty = '♡'.repeat(this.economy.maxLives - this.economy.lives);
     this.hudLives.setText(filled + empty);
 
+    // Wave status
     const state = this.waveManager.getState();
     const wave = this.waveManager.getCurrentWaveNumber();
     const total = this.waveManager.getTotalWaves();
@@ -440,6 +522,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.hudWave.setText(waveText);
 
+    // Hint — context shifts based on placement state.
     let hint: string;
     if (this.pendingTile) {
       hint = `Choose a tower for tile [${this.pendingTile.col},${this.pendingTile.row}] · ✕ or click elsewhere to cancel · Esc to close`;
@@ -461,6 +544,7 @@ export class GameScene extends Phaser.Scene {
     this.placementPopup?.refresh();
   }
 
+  /** Render or clear the grade letter overlay across all placeable tiles. */
   private renderGradeOverlay(): void {
     this.gradeOverlayTexts.forEach((t) => t.destroy());
     this.gradeOverlayTexts = [];
@@ -487,6 +571,10 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Print a balance summary to the browser console at scene start. Lets us
+   * verify systematically that good placement wins and bad placement loses.
+   */
   private logBalanceSummary(): void {
     const ranked = this.scorer.getRankedScores();
     if (ranked.length === 0) return;
@@ -494,10 +582,14 @@ export class GameScene extends Phaser.Scene {
     const counts: Record<string, number> = { S: 0, A: 0, B: 0, C: 0, D: 0 };
     for (const r of ranked) counts[r.score.grade] = (counts[r.score.grade] ?? 0) + 1;
 
-    const top = (n: number) => ranked.slice(0, n).reduce((s, r) => s + r.score.rawScore, 0);
+    const top = (n: number) =>
+      ranked.slice(0, n).reduce((s, r) => s + r.score.rawScore, 0);
     const bottom = (n: number) =>
-      ranked.slice(Math.max(0, ranked.length - n)).reduce((s, r) => s + r.score.rawScore, 0);
+      ranked
+        .slice(Math.max(0, ranked.length - n))
+        .reduce((s, r) => s + r.score.rawScore, 0);
 
+    // Total HP across the run for context.
     const grunt = GRUNT_CONFIG.hp;
     const heavy = HEAVY_CONFIG.hp;
     let runHp = 0;
@@ -511,6 +603,7 @@ export class GameScene extends Phaser.Scene {
 
     const quantDps = TOWERS.quant.damage / (TOWERS.quant.fireRateMs / 1000);
     const traderDps = TOWERS.trader.damage / (TOWERS.trader.fireRateMs / 1000);
+    const hedgeFundBoost = TOWERS.hedge_fund.aura?.damageMultiplier ?? 1.0;
 
     /* eslint-disable no-console */
     console.log('%c[Balance] Big Apple Defense placement scores', 'color:#fff200;font-weight:bold');
@@ -524,16 +617,27 @@ export class GameScene extends Phaser.Scene {
     console.log(
       `  Worst placement: [${worst.col},${worst.row}] = ${Math.round(worst.score.rawScore)}px in range (Grade ${worst.score.grade})`
     );
-    console.log(`  Skill ceiling (top 4 tiles, sum of px-in-range): ${Math.round(top(4))}`);
-    console.log(`  Skill floor   (bottom 4 tiles): ${Math.round(bottom(4))}`);
     console.log(
-      `  Quant:  ${quantDps.toFixed(1)} DPS | range ${TOWERS.quant.range}px | cost ${TOWERS.quant.cost}g`
+      `  Skill ceiling (top 4 tiles, sum of px-in-range): ${Math.round(top(4))}`
     );
     console.log(
-      `  Trader: ${traderDps.toFixed(1)} DPS | range ${TOWERS.trader.range}px | cost ${TOWERS.trader.cost}g`
+      `  Skill floor   (bottom 4 tiles): ${Math.round(bottom(4))}`
     );
-    console.log(`  Run total: ${runEnemies} enemies, ${runHp} HP (grunt ${grunt}, heavy ${heavy})`);
-    console.log('  Press G in-game to toggle the grade overlay; click any tile to choose a tower.');
+    console.log(
+      `  Quant:      ${quantDps.toFixed(1)} DPS | range ${TOWERS.quant.range}px | cost ${TOWERS.quant.cost}g`
+    );
+    console.log(
+      `  Trader:     ${traderDps.toFixed(1)} DPS | range ${TOWERS.trader.range}px | cost ${TOWERS.trader.cost}g`
+    );
+    console.log(
+      `  Hedge Fund: aura ×${hedgeFundBoost} | range ${TOWERS.hedge_fund.range}px | cost ${TOWERS.hedge_fund.cost}g (no direct damage; buffs other towers)`
+    );
+    console.log(
+      `  Run total: ${runEnemies} enemies, ${runHp} HP (grunt ${grunt}, heavy ${heavy})`
+    );
+    console.log(
+      '  Press G in-game to toggle the grade overlay; click any tile to choose a tower.'
+    );
     /* eslint-enable no-console */
   }
 
@@ -558,6 +662,8 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // ---- Game over -------------------------------------------------------
+
   private endGame(won: boolean): void {
     if (this.gameOver) return;
     this.gameOver = true;
@@ -578,6 +684,8 @@ export class GameScene extends Phaser.Scene {
       this.scene.start('GameOverScene', data);
     });
   }
+
+  // ---- Rendering -------------------------------------------------------
 
   private drawBackground(): void {
     const g = this.add.graphics();

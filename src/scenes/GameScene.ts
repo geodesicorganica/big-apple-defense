@@ -38,6 +38,12 @@ export class GameScene extends Phaser.Scene {
   private pendingTile: { col: number; row: number } | null = null;
   private pendingHighlight!: Phaser.GameObjects.Graphics;
   private placementPopup: PlacementPopup | null = null;
+  /**
+   * Set true when a popup button (or ✕) handler runs, so the scene-level
+   * POINTER_DOWN that fires immediately after doesn't treat the click as a
+   * click on the tile behind the popup.
+   */
+  private popupClickConsumed = false;
 
   private enemies: Enemy[] = [];
   private towers: Tower[] = [];
@@ -47,7 +53,6 @@ export class GameScene extends Phaser.Scene {
   private gameOver = false;
   private towersPlaced = 0;
 
-  // HUD
   private hudGold!: Phaser.GameObjects.Text;
   private hudLives!: Phaser.GameObjects.Text;
   private hudWave!: Phaser.GameObjects.Text;
@@ -79,6 +84,7 @@ export class GameScene extends Phaser.Scene {
     this.gradeOverlayTexts = [];
     this.pendingTile = null;
     this.placementPopup = null;
+    this.popupClickConsumed = false;
 
     this.drawBackground();
     this.drawGrid();
@@ -206,6 +212,17 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.input.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
+      // CASE 1: a popup button handler just ran (and may have destroyed the
+      // popup). The scene-level pointerdown fires AFTER the button's handler,
+      // so we'd otherwise misinterpret this as a click on the tile behind the
+      // popup. Consume the flag and bail.
+      if (this.popupClickConsumed) {
+        this.popupClickConsumed = false;
+        return;
+      }
+
+      // CASE 2: popup still alive and click landed on its panel (not a button).
+      // Ignore — keep the popup open.
       if (this.placementPopup?.containsPoint(pointer.worldX, pointer.worldY)) return;
 
       const tile = this.pointerToTile(pointer);
@@ -247,20 +264,38 @@ export class GameScene extends Phaser.Scene {
       T,
       ['quant', 'trader'],
       {
-        onPick: (type) => this.commitPlacement(type),
-        onCancel: () => this.cancelPlacement(),
+        onPick: (type) => {
+          // Mark click consumed BEFORE any state changes so the scene-level
+          // pointerdown that fires next ignores this click.
+          this.popupClickConsumed = true;
+          this.commitPlacement(type);
+        },
+        onCancel: () => {
+          this.popupClickConsumed = true;
+          this.cancelPlacement();
+        },
         canAfford: (type) => this.economy.canAfford(TOWERS[type].cost),
       }
     );
   }
 
+  /**
+   * Place the selected tower at the pending tile.
+   *
+   * Behavior:
+   *   - Affordable + placeable: place tower, close popup.
+   *   - Unaffordable: flash 'Not enough gold!' but KEEP popup open. The
+   *     popup auto-refreshes affordability each frame, so the user can wait
+   *     for kills/wave bonus to push gold over the threshold and click again.
+   *   - Tile no longer placeable: cancel.
+   */
   private commitPlacement(type: TowerType): void {
     if (!this.pendingTile) return;
     const { col, row } = this.pendingTile;
     const cfg = TOWERS[type];
     if (!this.economy.canAfford(cfg.cost)) {
       this.flashFloatingText('Not enough gold!', this.scale.width / 2, 110, '#ff4444');
-      this.cancelPlacement();
+      // Keep popup open — user can wait for gold and click again.
       return;
     }
     if (!this.isPlaceable(col, row)) {
@@ -375,7 +410,7 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5, 0);
 
     this.add
-      .text(this.scale.width - 20, 12, 'v0.3.1 — M3 / C2 (popup + balance sim)', {
+      .text(this.scale.width - 20, 12, 'v0.3.2 — M3 / C3 (popup fixes)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',
@@ -419,6 +454,11 @@ export class GameScene extends Phaser.Scene {
       hint = `Click any sidewalk tile to choose a tower · G for placement grades`;
     }
     this.hudHint.setText(hint);
+
+    // Keep the placement popup's affordability state in sync with current gold
+    // so towers light up the moment the player can afford them — without
+    // needing to close + reopen the popup.
+    this.placementPopup?.refresh();
   }
 
   private renderGradeOverlay(): void {

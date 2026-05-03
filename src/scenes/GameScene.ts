@@ -9,13 +9,16 @@ import { PlacementScorer, gradeColor } from '../systems/PlacementScorer';
 import {
   STARTING_GOLD,
   STARTING_LIVES,
-  PLACEHOLDER_TOWER_CONFIG,
+  TOWERS,
+  TowerType,
+  SCORING_REFERENCE_TOWER,
   GRUNT_CONFIG,
   HEAVY_CONFIG,
   WAVE_DEFINITIONS,
   WAVE_REWARDS,
   EnemyType,
 } from '../balance';
+import { TowerPalette } from '../ui/TowerPalette';
 import type { GameOverData } from './GameOverScene';
 
 /**
@@ -37,11 +40,14 @@ export class GameScene extends Phaser.Scene {
   static readonly TILE_SIZE = 80;
   static readonly GRID_COLS = 16;
   static readonly GRID_ROWS = 9;
+  /** Vertical offset of the bottom palette strip — y >= this is the palette area. */
+  static readonly PALETTE_STRIP_Y = 720;
 
   private path!: PathSystem;
   private economy!: Economy;
   private waveManager!: WaveManager;
   private scorer!: PlacementScorer;
+  private palette!: TowerPalette;
   private gradesVisible = false;
   private gradeOverlayTexts: Phaser.GameObjects.Text[] = [];
 
@@ -72,7 +78,7 @@ export class GameScene extends Phaser.Scene {
     this.scorer = new PlacementScorer(
       this.path,
       GameScene.TILE_SIZE,
-      PLACEHOLDER_TOWER_CONFIG.range
+      SCORING_REFERENCE_TOWER.range
     );
     this.scorer.computeAllScores(GameScene.GRID_COLS, GameScene.GRID_ROWS);
     this.logBalanceSummary();
@@ -88,11 +94,21 @@ export class GameScene extends Phaser.Scene {
     this.gradeOverlayTexts = [];
 
     this.drawBackground();
+    this.drawPaletteStripBackground();
     this.drawGrid();
     this.drawPath();
     this.drawHUD();
 
     this.hoverGraphics = this.add.graphics();
+
+    // Tower selection palette in the bottom strip.
+    this.palette = new TowerPalette(
+      this,
+      ['quant', 'trader'],
+      this.scale.width / 2,
+      GameScene.PALETTE_STRIP_Y + (this.scale.height - GameScene.PALETTE_STRIP_Y) / 2
+    );
+
     this.wireInput();
 
     this.cameras.main.fadeIn(250, 0, 0, 0);
@@ -151,6 +167,7 @@ export class GameScene extends Phaser.Scene {
 
     for (const projectile of this.projectiles) projectile.update(deltaSeconds);
 
+    // Cull dead/leaked entities and update economy
     const stillAlive: Enemy[] = [];
     for (const enemy of this.enemies) {
       if (enemy.dead) {
@@ -162,6 +179,7 @@ export class GameScene extends Phaser.Scene {
         enemy.destroy();
         if (ranOut) {
           this.endGame(false);
+          // Flush remaining cleanup but skip further game logic this frame
           this.enemies = [];
           this.projectiles = this.projectiles.filter((p) => {
             p.destroy();
@@ -186,6 +204,8 @@ export class GameScene extends Phaser.Scene {
     this.refreshHUD(time);
   }
 
+  // ---- Setup -----------------------------------------------------------
+
   private buildPathWaypoints(): Waypoint[] {
     const T = GameScene.TILE_SIZE;
     const half = T / 2;
@@ -209,6 +229,8 @@ export class GameScene extends Phaser.Scene {
     this.enemies.push(new Enemy(this, this.path, config));
   }
 
+  // ---- Input -----------------------------------------------------------
+
   private wireInput(): void {
     this.input.on(Phaser.Input.Events.POINTER_MOVE, (pointer: Phaser.Input.Pointer) => {
       this.hoverTile = this.pointerToTile(pointer);
@@ -216,6 +238,8 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.input.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
+      // Skip if click landed on the tower palette — it has its own handlers.
+      if (this.palette.containsPoint(pointer.worldX, pointer.worldY)) return;
       const tile = this.pointerToTile(pointer);
       if (!tile) return;
       this.tryPlaceTower(tile.col, tile.row);
@@ -228,8 +252,15 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /** Currently selected tower's config, via the palette. */
+  private selectedTowerConfig() {
+    return TOWERS[this.palette.getSelected()];
+  }
+
   private pointerToTile(pointer: Phaser.Input.Pointer): { col: number; row: number } | null {
     const T = GameScene.TILE_SIZE;
+    // Clicks below the grid (in the palette strip) don't map to a tile.
+    if (pointer.worldY >= GameScene.PALETTE_STRIP_Y) return null;
     const col = Math.floor(pointer.worldX / T);
     const row = Math.floor(pointer.worldY / T);
     if (col < 0 || col >= GameScene.GRID_COLS) return null;
@@ -245,16 +276,16 @@ export class GameScene extends Phaser.Scene {
 
   private tryPlaceTower(col: number, row: number): void {
     if (!this.isPlaceable(col, row)) return;
-    const cost = PLACEHOLDER_TOWER_CONFIG.cost;
-    if (!this.economy.canAfford(cost)) {
+    const cfg = this.selectedTowerConfig();
+    if (!this.economy.canAfford(cfg.cost)) {
       this.flashFloatingText('Not enough gold!', this.scale.width / 2, 110, '#ff4444');
       return;
     }
-    this.economy.spend(cost);
+    this.economy.spend(cfg.cost);
     const T = GameScene.TILE_SIZE;
     const x = col * T + T / 2;
     const y = row * T + T / 2;
-    this.towers.push(new Tower(this, col, row, x, y, PLACEHOLDER_TOWER_CONFIG));
+    this.towers.push(new Tower(this, col, row, x, y, cfg));
     this.occupiedTiles.add(this.tileKey(col, row));
     this.towersPlaced++;
   }
@@ -269,16 +300,28 @@ export class GameScene extends Phaser.Scene {
     const T = GameScene.TILE_SIZE;
     const { col, row } = this.hoverTile;
     const placeable = this.isPlaceable(col, row);
-    const affordable = this.economy.canAfford(PLACEHOLDER_TOWER_CONFIG.cost);
+    const cfg = this.selectedTowerConfig();
+    const affordable = this.economy.canAfford(cfg.cost);
     const ok = placeable && affordable;
     const color = ok ? 0x66ff66 : 0xff3344;
     this.hoverGraphics.lineStyle(3, color, 0.85);
     this.hoverGraphics.strokeRect(col * T + 2, row * T + 2, T - 4, T - 4);
     this.hoverGraphics.fillStyle(color, 0.12);
     this.hoverGraphics.fillRect(col * T + 2, row * T + 2, T - 4, T - 4);
+
+    // Range preview circle on the hovered tile.
+    if (placeable) {
+      const cx = col * T + T / 2;
+      const cy = row * T + T / 2;
+      this.hoverGraphics.lineStyle(1, cfg.accentColor, 0.5);
+      this.hoverGraphics.strokeCircle(cx, cy, cfg.range);
+    }
   }
 
+  // ---- HUD -------------------------------------------------------------
+
   private drawHUD(): void {
+    // Top-left: title
     this.add.text(20, 12, 'BIG APPLE DEFENSE', {
       fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
       fontSize: '20px',
@@ -287,6 +330,7 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 2,
     });
 
+    // Gold
     this.hudGold = this.add.text(20, 40, '', {
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: '18px',
@@ -294,6 +338,7 @@ export class GameScene extends Phaser.Scene {
       fontStyle: 'bold',
     });
 
+    // Lives
     this.hudLives = this.add.text(180, 40, '', {
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: '18px',
@@ -301,6 +346,7 @@ export class GameScene extends Phaser.Scene {
       fontStyle: 'bold',
     });
 
+    // Wave status (top center)
     this.hudWave = this.add
       .text(this.scale.width / 2, 20, '', {
         fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
@@ -309,15 +355,20 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
-    this.hudHint = this.add.text(20, this.scale.height - 28, '', {
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: '13px',
-      color: '#bbbbbb',
-      fontStyle: 'italic',
-    });
+    // Hint (top-center, below wave indicator). Updates on hover with placement
+    // grade info from the scorer.
+    this.hudHint = this.add
+      .text(this.scale.width / 2, 50, '', {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: '13px',
+        color: '#bbbbbb',
+        fontStyle: 'italic',
+      })
+      .setOrigin(0.5, 0);
 
+    // Version tag (top-right corner)
     this.add
-      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.8 — M2 / C9 (balance.ts)', {
+      .text(this.scale.width - 20, 12, 'v0.3.0 — M3 / C1 (Finance Bros)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',
@@ -325,13 +376,30 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(1, 0);
   }
 
+  /**
+   * Render a dark strip across the bottom of the canvas to visually separate
+   * the tower palette from the gameplay grid.
+   */
+  private drawPaletteStripBackground(): void {
+    const stripHeight = this.scale.height - GameScene.PALETTE_STRIP_Y;
+    const g = this.add.graphics();
+    g.fillStyle(0x0a0a14, 1);
+    g.fillRect(0, GameScene.PALETTE_STRIP_Y, this.scale.width, stripHeight);
+    // Top border accent
+    g.lineStyle(1, 0xfff200, 0.35);
+    g.lineBetween(0, GameScene.PALETTE_STRIP_Y, this.scale.width, GameScene.PALETTE_STRIP_Y);
+  }
+
   private refreshHUD(time: number): void {
+    // Gold
     this.hudGold.setText(`💰 ${this.economy.gold}g`);
 
+    // Lives — heart icons
     const filled = '❤'.repeat(this.economy.lives);
     const empty = '♡'.repeat(this.economy.maxLives - this.economy.lives);
     this.hudLives.setText(filled + empty);
 
+    // Wave status
     const state = this.waveManager.getState();
     const wave = this.waveManager.getCurrentWaveNumber();
     const total = this.waveManager.getTotalWaves();
@@ -347,17 +415,23 @@ export class GameScene extends Phaser.Scene {
     }
     this.hudWave.setText(waveText);
 
-    const cost = PLACEHOLDER_TOWER_CONFIG.cost;
-    let hint = `Click sidewalk to place tower (${cost}g) — Press G for placement grades`;
+    // Hint — selected tower + hovered tile's placement grade.
+    const selected = this.palette.getSelected();
+    const cfg = this.selectedTowerConfig();
+    const selectedLabel = selected.charAt(0).toUpperCase() + selected.slice(1);
+    let hint = `${selectedLabel} (${cfg.cost}g) — pick a sidewalk tile · 1/2 to switch · G for grades`;
     if (this.hoverTile) {
       const score = this.scorer.scoreTile(this.hoverTile.col, this.hoverTile.row);
       if (score.rawScore > 0) {
-        hint = `Tile [${this.hoverTile.col},${this.hoverTile.row}] — Grade ${score.grade} (${Math.round(score.rawScore)}px in range, ${Math.round(score.normalized * 100)}% of best) — ${cost}g`;
+        hint = `${selectedLabel} (${cfg.cost}g) — Tile [${this.hoverTile.col},${this.hoverTile.row}] · Grade ${score.grade} (${Math.round(score.rawScore)}px in range, ${Math.round(score.normalized * 100)}% of best)`;
       } else {
-        hint = `Tile [${this.hoverTile.col},${this.hoverTile.row}] — blocked (on path or occupied)`;
+        hint = `${selectedLabel} (${cfg.cost}g) — Tile [${this.hoverTile.col},${this.hoverTile.row}] · blocked (on path or occupied)`;
       }
     }
     this.hudHint.setText(hint);
+
+    // Reflect affordability state in the palette buttons.
+    this.palette.refresh(this.economy);
   }
 
   /** Render or clear the grade letter overlay across all placeable tiles. */
@@ -405,6 +479,7 @@ export class GameScene extends Phaser.Scene {
         .slice(Math.max(0, ranked.length - n))
         .reduce((s, r) => s + r.score.rawScore, 0);
 
+    // Total HP across the run for context.
     const grunt = GRUNT_CONFIG.hp;
     const heavy = HEAVY_CONFIG.hp;
     let runHp = 0;
@@ -416,13 +491,13 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    const dps =
-      PLACEHOLDER_TOWER_CONFIG.damage / (PLACEHOLDER_TOWER_CONFIG.fireRateMs / 1000);
+    const quantDps = TOWERS.quant.damage / (TOWERS.quant.fireRateMs / 1000);
+    const traderDps = TOWERS.trader.damage / (TOWERS.trader.fireRateMs / 1000);
 
     /* eslint-disable no-console */
     console.log('%c[Balance] Big Apple Defense placement scores', 'color:#fff200;font-weight:bold');
     console.log(
-      `  Tile distribution — S:${counts.S}  A:${counts.A}  B:${counts.B}  C:${counts.C}  D:${counts.D}  (placeable total: ${ranked.length})`
+      `  Tile distribution (Quant range ref) — S:${counts.S}  A:${counts.A}  B:${counts.B}  C:${counts.C}  D:${counts.D}  (placeable total: ${ranked.length})`
     );
     console.log(
       `  Best placement: [${ranked[0].col},${ranked[0].row}] = ${Math.round(ranked[0].score.rawScore)}px in range (Grade ${ranked[0].score.grade})`
@@ -438,13 +513,16 @@ export class GameScene extends Phaser.Scene {
       `  Skill floor   (bottom 4 tiles): ${Math.round(bottom(4))}`
     );
     console.log(
-      `  Tower DPS: ${dps.toFixed(1)} | Tower range: ${PLACEHOLDER_TOWER_CONFIG.range}px`
+      `  Quant:  ${quantDps.toFixed(1)} DPS | range ${TOWERS.quant.range}px | cost ${TOWERS.quant.cost}g`
+    );
+    console.log(
+      `  Trader: ${traderDps.toFixed(1)} DPS | range ${TOWERS.trader.range}px | cost ${TOWERS.trader.cost}g`
     );
     console.log(
       `  Run total: ${runEnemies} enemies, ${runHp} HP (grunt ${grunt}, heavy ${heavy})`
     );
     console.log(
-      '  Press G in-game to toggle the grade overlay on all placeable tiles.'
+      '  Press G in-game to toggle the grade overlay; press 1/2 to switch towers.'
     );
     /* eslint-enable no-console */
   }
@@ -470,6 +548,8 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // ---- Game over -------------------------------------------------------
+
   private endGame(won: boolean): void {
     if (this.gameOver) return;
     this.gameOver = true;
@@ -490,6 +570,8 @@ export class GameScene extends Phaser.Scene {
       this.scene.start('GameOverScene', data);
     });
   }
+
+  // ---- Rendering -------------------------------------------------------
 
   private drawBackground(): void {
     const g = this.add.graphics();

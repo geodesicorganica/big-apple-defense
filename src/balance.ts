@@ -11,6 +11,9 @@
  *      with new tower range.
  *
  * Balance history (most-recent first):
+ *   v0.3.0 — M3 Finance Bros: replaced placeholder tower with Quant + Trader
+ *            real tower configs per GDD §5
+ *   v0.2.8 — refactor; consolidated all numbers here (no behavior change)
  *   v0.2.7 — placement scoring system added (no balance changes)
  *   v0.2.6 — grunt reward 5 → 6g; W1 bonus 25 → 50g
  *   v0.2.5 — kill rewards cut (grunt 8→5, heavy 25→18); range 185 → 160
@@ -50,17 +53,54 @@ export const STARTING_LIVES = 4;
 // ---- Tower stats ----------------------------------------------------
 
 /**
- * The single placeholder tower used in M2. M3+ replaces this with clan-specific
- * tower configs (Quant, Trader, Hedge Fund, etc.) per GDD §4–5.
+ * Identifier for a tower type. Used for selection UI and the TOWERS map.
+ * M3/C1 ships Quant + Trader; Hedge Fund arrives in C2.
  */
-export const PLACEHOLDER_TOWER_CONFIG: TowerConfig = {
-  damage: 18,
-  range: 160,
-  fireRateMs: 725,
+export type TowerType = 'quant' | 'trader';
+
+/**
+ * Quant — Finance Bros sniper. High-DPS single target, long range. The
+ * "always good" tower per GDD §4. Stats from GDD §5.
+ */
+export const QUANT_TOWER: TowerConfig = {
+  damage: 25,
+  range: 480, // 6 tiles × 80px
+  fireRateMs: 1000,
+  bodyColor: 0x1a2a44, // Wall Street navy
+  accentColor: 0xd4af37, // gold
+  cost: 150,
+};
+
+/**
+ * Trader — Finance Bros rapid-fire DPS. Cheap filler. Stats from GDD §5.
+ */
+export const TRADER_TOWER: TowerConfig = {
+  damage: 8,
+  range: 320, // 4 tiles × 80px
+  fireRateMs: 300,
   bodyColor: 0x1a2a44,
-  accentColor: 0xd4af37,
+  accentColor: 0xc0c0c0, // silver
   cost: 75,
 };
+
+/** Tower configs indexed by TowerType. */
+export const TOWERS: Record<TowerType, TowerConfig> = {
+  quant: QUANT_TOWER,
+  trader: TRADER_TOWER,
+};
+
+/** Display names for tower types (used by the palette UI). */
+export const TOWER_NAMES: Record<TowerType, string> = {
+  quant: 'QUANT',
+  trader: 'TRADER',
+};
+
+/**
+ * The tower the placement scorer uses as its reference range. Quant has the
+ * longest range so its scoring view is the most informative — it tells you
+ * which tiles have the most path coverage potential.
+ */
+export const SCORING_REFERENCE_TOWER: TowerConfig = QUANT_TOWER;
 
 // ---- Enemy stats ----------------------------------------------------
 

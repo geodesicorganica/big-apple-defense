@@ -6,6 +6,7 @@ import { Projectile } from '../entities/Projectile';
 import { Economy } from '../systems/Economy';
 import { WaveManager } from '../systems/WaveManager';
 import { WAVE_DEFINITIONS, WAVE_REWARDS, EnemyType } from '../systems/WaveData';
+import { PlacementScorer, gradeColor } from '../systems/PlacementScorer';
 import type { GameOverData } from './GameOverScene';
 
 /**
@@ -36,6 +37,9 @@ export class GameScene extends Phaser.Scene {
   private path!: PathSystem;
   private economy!: Economy;
   private waveManager!: WaveManager;
+  private scorer!: PlacementScorer;
+  private gradesVisible = false;
+  private gradeOverlayTexts: Phaser.GameObjects.Text[] = [];
 
   private enemies: Enemy[] = [];
   private towers: Tower[] = [];
@@ -61,6 +65,14 @@ export class GameScene extends Phaser.Scene {
     this.path = new PathSystem(this.buildPathWaypoints());
     this.economy = new Economy(GameScene.STARTING_GOLD, GameScene.STARTING_LIVES);
     this.waveManager = new WaveManager(this, WAVE_DEFINITIONS);
+    this.scorer = new PlacementScorer(
+      this.path,
+      GameScene.TILE_SIZE,
+      PLACEHOLDER_TOWER_CONFIG.range
+    );
+    this.scorer.computeAllScores(GameScene.GRID_COLS, GameScene.GRID_ROWS);
+    this.logBalanceSummary();
+
     this.enemies = [];
     this.towers = [];
     this.projectiles = [];
@@ -68,6 +80,8 @@ export class GameScene extends Phaser.Scene {
     this.gameOver = false;
     this.towersPlaced = 0;
     this.hoverTile = null;
+    this.gradesVisible = false;
+    this.gradeOverlayTexts = [];
 
     this.drawBackground();
     this.drawGrid();
@@ -83,9 +97,11 @@ export class GameScene extends Phaser.Scene {
       this.enemies.forEach((e) => e.destroy());
       this.towers.forEach((t) => t.destroy());
       this.projectiles.forEach((p) => p.destroy());
+      this.gradeOverlayTexts.forEach((t) => t.destroy());
       this.enemies = [];
       this.towers = [];
       this.projectiles = [];
+      this.gradeOverlayTexts = [];
       this.occupiedTiles.clear();
     });
   }
@@ -200,6 +216,12 @@ export class GameScene extends Phaser.Scene {
       if (!tile) return;
       this.tryPlaceTower(tile.col, tile.row);
     });
+
+    // Press G to toggle the placement-grade overlay across all placeable tiles.
+    this.input.keyboard?.on('keydown-G', () => {
+      this.gradesVisible = !this.gradesVisible;
+      this.renderGradeOverlay();
+    });
   }
 
   private pointerToTile(pointer: Phaser.Input.Pointer): { col: number; row: number } | null {
@@ -291,7 +313,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.add
-      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.6 — M2 / C7 (gold bump)', {
+      .text(this.scale.width - 20, this.scale.height - 28, 'v0.2.7 — M2 / C8 (placement scoring · press G)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',
@@ -321,8 +343,107 @@ export class GameScene extends Phaser.Scene {
     }
     this.hudWave.setText(waveText);
 
+    // Hint — includes the hovered tile's placement grade for systematic balance feedback.
     const cost = PLACEHOLDER_TOWER_CONFIG.cost;
-    this.hudHint.setText(`Click sidewalk to place tower (${cost}g) — green = can build, red = blocked`);
+    let hint = `Click sidewalk to place tower (${cost}g) — Press G for placement grades`;
+    if (this.hoverTile) {
+      const score = this.scorer.scoreTile(this.hoverTile.col, this.hoverTile.row);
+      if (score.rawScore > 0) {
+        hint = `Tile [${this.hoverTile.col},${this.hoverTile.row}] — Grade ${score.grade} (${Math.round(score.rawScore)}px in range, ${Math.round(score.normalized * 100)}% of best) — ${cost}g`;
+      } else {
+        hint = `Tile [${this.hoverTile.col},${this.hoverTile.row}] — blocked (on path or occupied)`;
+      }
+    }
+    this.hudHint.setText(hint);
+  }
+
+  /** Render or clear the grade letter overlay across all placeable tiles. */
+  private renderGradeOverlay(): void {
+    this.gradeOverlayTexts.forEach((t) => t.destroy());
+    this.gradeOverlayTexts = [];
+    if (!this.gradesVisible) return;
+
+    const T = GameScene.TILE_SIZE;
+    for (let c = 0; c < GameScene.GRID_COLS; c++) {
+      for (let r = 0; r < GameScene.GRID_ROWS; r++) {
+        const score = this.scorer.scoreTile(c, r);
+        if (score.rawScore <= 0) continue;
+        const text = this.add
+          .text(c * T + T / 2, r * T + T / 2, score.grade, {
+            fontFamily: 'Impact, "Arial Black", system-ui, sans-serif',
+            fontSize: '28px',
+            fontStyle: 'bold',
+            color: gradeColor(score.grade),
+            stroke: '#000000',
+            strokeThickness: 4,
+          })
+          .setOrigin(0.5);
+        text.setAlpha(0.85);
+        this.gradeOverlayTexts.push(text);
+      }
+    }
+  }
+
+  /**
+   * Print a balance summary to the browser console at scene start. Lets us
+   * verify systematically that good placement wins and bad placement loses.
+   */
+  private logBalanceSummary(): void {
+    const ranked = this.scorer.getRankedScores();
+    if (ranked.length === 0) return;
+
+    const counts: Record<string, number> = { S: 0, A: 0, B: 0, C: 0, D: 0 };
+    for (const r of ranked) counts[r.score.grade] = (counts[r.score.grade] ?? 0) + 1;
+
+    const top = (n: number) =>
+      ranked.slice(0, n).reduce((s, r) => s + r.score.rawScore, 0);
+    const bottom = (n: number) =>
+      ranked
+        .slice(Math.max(0, ranked.length - n))
+        .reduce((s, r) => s + r.score.rawScore, 0);
+
+    const grunt = GRUNT_CONFIG.hp;
+    const heavy = HEAVY_CONFIG.hp;
+    let runHp = 0;
+    let runEnemies = 0;
+    for (const wave of WAVE_DEFINITIONS) {
+      for (const step of wave) {
+        runHp += step.enemyType === 'heavy' ? heavy : grunt;
+        runEnemies++;
+      }
+    }
+
+    const dps =
+      PLACEHOLDER_TOWER_CONFIG.damage / (PLACEHOLDER_TOWER_CONFIG.fireRateMs / 1000);
+
+    /* eslint-disable no-console */
+    console.log('%c[Balance] Big Apple Defense placement scores', 'color:#fff200;font-weight:bold');
+    console.log(
+      `  Tile distribution — S:${counts.S}  A:${counts.A}  B:${counts.B}  C:${counts.C}  D:${counts.D}  (placeable total: ${ranked.length})`
+    );
+    console.log(
+      `  Best placement: [${ranked[0].col},${ranked[0].row}] = ${Math.round(ranked[0].score.rawScore)}px in range (Grade ${ranked[0].score.grade})`
+    );
+    const worst = ranked[ranked.length - 1];
+    console.log(
+      `  Worst placement: [${worst.col},${worst.row}] = ${Math.round(worst.score.rawScore)}px in range (Grade ${worst.score.grade})`
+    );
+    console.log(
+      `  Skill ceiling (top 4 tiles, sum of px-in-range): ${Math.round(top(4))}`
+    );
+    console.log(
+      `  Skill floor   (bottom 4 tiles): ${Math.round(bottom(4))}`
+    );
+    console.log(
+      `  Tower DPS: ${dps.toFixed(1)} | Tower range: ${PLACEHOLDER_TOWER_CONFIG.range}px`
+    );
+    console.log(
+      `  Run total: ${runEnemies} enemies, ${runHp} HP (grunt ${grunt}, heavy ${heavy})`
+    );
+    console.log(
+      '  Press G in-game to toggle the grade overlay on all placeable tiles.'
+    );
+    /* eslint-enable no-console */
   }
 
   private flashFloatingText(text: string, x: number, y: number, color: string): void {

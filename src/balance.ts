@@ -11,6 +11,10 @@
  *      with new tower range.
  *
  * Balance history (most-recent first):
+ *   v0.3.5 — M3/C6 Times Square sidewalk art: scene background swapped
+ *            from a navy gradient to a 1920x1080 photographic top-down
+ *            view of a Manhattan sidewalk (Nano Banana Pro). No gameplay
+ *            balance change; flat tile fills dropped, grid lines softened.
  *   v0.3.4 — M3/C5 Bull Market passive: Finance Bros tower damage scales
  *            with gold on hand, capped at +50% (1000g hits the cap). Run
  *            expanded 3 → 6 waves (3122 → 10030 HP) so the late-game

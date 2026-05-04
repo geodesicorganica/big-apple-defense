@@ -82,6 +82,24 @@ export class GameScene extends Phaser.Scene {
     super({ key: 'GameScene' });
   }
 
+  /**
+   * Phaser hook — runs before create(). Loads the Times Square sidewalk
+   * texture used by drawBackground().
+   *
+   * Hosted on the platform CDN rather than baked into the deploy because
+   * the binary is too large to push through the GitHub commit API tool
+   * we use from the agent. Once we have a Personal Access Token / git CLI
+   * push path, swap this to a relative `/assets/sidewalk-bg.jpg` import
+   * (the file already lives under `public/assets/`, so Vite will pick it
+   * up automatically; only this URL needs to change). Tracked: M3/C6.
+   */
+  preload(): void {
+    this.load.image(
+      'sidewalk-bg',
+      'https://pub.hyperagent.com/api/published/9_RgI-9FDZjgsf0xi3L0uA/sidewalk-bg.jpg'
+    );
+  }
+
   create(): void {
     this.path = new PathSystem(this.buildPathWaypoints());
     this.economy = new Economy(STARTING_GOLD, STARTING_LIVES);
@@ -510,7 +528,7 @@ export class GameScene extends Phaser.Scene {
 
     // Version tag (top-right corner)
     this.add
-      .text(this.scale.width - 20, 12, 'v0.3.4 — M3 / C5 (Bull Market + 6 waves)', {
+      .text(this.scale.width - 20, 12, 'v0.3.5 — M3 / C6 (Times Square art)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',
@@ -719,31 +737,37 @@ export class GameScene extends Phaser.Scene {
 
   // ---- Rendering -------------------------------------------------------
 
+  /**
+   * Lay down the Times Square sidewalk photo as the scene background.
+   * Stretched to fill the canvas (1280x720 game res; image is 1920x1080
+   * for retina-quality at this size). A subtle dark vignette is layered
+   * on top so the HUD text still reads against the warm photo and the
+   * yellow path stripe pops.
+   */
   private drawBackground(): void {
-    const g = this.add.graphics();
     const { width, height } = this.scale;
-    for (let y = 0; y < height; y++) {
-      const t = y / height;
-      const r = Math.floor(0x18 + (0x4a - 0x18) * t);
-      const gv = Math.floor(0x1c + (0x36 - 0x1c) * t);
-      const b = Math.floor(0x2c + (0x4c - 0x2c) * t);
-      g.fillStyle((r << 16) | (gv << 8) | b, 1);
-      g.fillRect(0, y, width, 1);
-    }
+
+    const bg = this.add.image(width / 2, height / 2, 'sidewalk-bg');
+    bg.setDisplaySize(width, height);
+    bg.setDepth(-100);
+
+    // Soft vignette — keeps HUD legible without flattening the photo.
+    const vignette = this.add.graphics();
+    vignette.fillStyle(0x000000, 0.22);
+    vignette.fillRect(0, 0, width, height);
+    vignette.setDepth(-99);
   }
 
+  /**
+   * Draw the placement grid. Pre-v0.3.5 we filled non-path tiles with a
+   * flat grey overlay so they read as "placeable"; with the photo
+   * background we drop the fills (they'd just smudge the texture) and
+   * keep only thin grid lines so players can still eyeball tile centers.
+   */
   private drawGrid(): void {
     const g = this.add.graphics();
     const T = GameScene.TILE_SIZE;
-    for (let c = 0; c < GameScene.GRID_COLS; c++) {
-      for (let r = 0; r < GameScene.GRID_ROWS; r++) {
-        if (!this.path.isOnPath(c, r, T)) {
-          g.fillStyle(0x4c4860, 0.2);
-          g.fillRect(c * T + 2, r * T + 2, T - 4, T - 4);
-        }
-      }
-    }
-    g.lineStyle(1, 0x2a2a3a, 0.35);
+    g.lineStyle(1, 0xffffff, 0.08); // very faint, just enough to land your eye on a tile
     for (let c = 0; c <= GameScene.GRID_COLS; c++) {
       g.lineBetween(c * T, 0, c * T, GameScene.GRID_ROWS * T);
     }

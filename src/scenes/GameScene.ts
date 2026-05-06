@@ -83,21 +83,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Phaser hook — runs before create(). Loads the Times Square sidewalk
-   * texture used by drawBackground().
+   * Phaser hook — runs before create(). Loads the post-invasion Times
+   * Square sidewalk texture used by drawBackground().
    *
-   * Hosted on the platform CDN rather than baked into the deploy because
-   * the binary is too large to push through the GitHub commit API tool
-   * we use from the agent. Once we have a Personal Access Token / git CLI
-   * push path, swap this to a relative `/assets/sidewalk-bg.jpg` import
-   * (the file already lives under `public/assets/`, so Vite will pick it
-   * up automatically; only this URL needs to change). Tracked: M3/C6.
+   * Same-origin asset baked into the Vite build (lives under public/assets/,
+   * served from /assets/ at runtime). v0.3.5 attempted to load this from a
+   * cross-origin CDN URL and got CORS-blocked in production, leaving Phaser
+   * with a missing-texture fallback (bright-green field). v0.3.6 ships the
+   * binary in the repo to make the load bulletproof.
    */
   preload(): void {
-    this.load.image(
-      'sidewalk-bg',
-      'https://pub.hyperagent.com/api/published/9_RgI-9FDZjgsf0xi3L0uA/sidewalk-bg.jpg'
-    );
+    this.load.image('sidewalk-bg', '/assets/sidewalk-bg.jpg');
   }
 
   create(): void {
@@ -498,8 +494,10 @@ export class GameScene extends Phaser.Scene {
       fontStyle: 'bold',
     });
 
-    // Lives
-    this.hudLives = this.add.text(180, 40, '', {
+    // Lives — pushed right of the gold text, which can grow to "💰 850g  +43% Bull"
+    // when Bull Market kicks in. v0.3.5 had this at x=180 and the heart icons
+    // overlapped the Bull suffix; 260 leaves room for the longest gold string.
+    this.hudLives = this.add.text(260, 40, '', {
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: '18px',
       color: '#ff5566',
@@ -528,7 +526,7 @@ export class GameScene extends Phaser.Scene {
 
     // Version tag (top-right corner)
     this.add
-      .text(this.scale.width - 20, 12, 'v0.3.5 — M3 / C6 (Times Square art)', {
+      .text(this.scale.width - 20, 12, 'v0.3.6 — M3 / C6 (post-invasion art)', {
         fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
         fontSize: '12px',
         color: '#888888',
@@ -537,12 +535,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private refreshHUD(time: number): void {
-    // Gold + Bull Market indicator. Once you hit the cap the suffix locks
-    // at "+50% Bull (max)" so the player knows hoarding past 1000g is wasted.
+    // Gold + Bull Market indicator. Hide the suffix below +5% so early-game
+    // (~100g) doesn't get noisy with "+1% Bull" — only show once it's
+    // meaningful. Once you hit the cap the suffix locks at "+50% Bull (max)"
+    // so the player knows hoarding past 1000g is wasted.
     const bullMult = getBullMarketMultiplier(this.economy.gold);
     const bullPct = Math.round((bullMult - 1) * 100);
     let goldText = `💰 ${this.economy.gold}g`;
-    if (bullPct > 0) {
+    if (bullPct >= 5) {
       const atCap = this.economy.gold >= BULL_MARKET.fullBoostGold;
       goldText += atCap ? `  +${bullPct}% Bull (max)` : `  +${bullPct}% Bull`;
     }

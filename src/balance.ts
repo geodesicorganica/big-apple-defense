@@ -11,6 +11,12 @@
  *      with new tower range.
  *
  * Balance history (most-recent first):
+ *   v0.3.6 — M3/C6 fix-up: post-invasion Times Square art (crashed cabs,
+ *            TKTS staircase, NYPD signage, M&Ms World, billboards) baked
+ *            into the deploy as a same-origin asset (v0.3.5 CDN URL was
+ *            CORS-blocked, leaving a green field). HUD: lives moved
+ *            x=180→260 to clear the Bull suffix; suffix now hidden below
+ *            +5% so early-game gold counter isn't noisy.
  *   v0.3.5 — M3/C6 Times Square sidewalk art: scene background swapped
  *            from a navy gradient to a 1920x1080 photographic top-down
  *            view of a Manhattan sidewalk (Nano Banana Pro). No gameplay
